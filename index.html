@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>D3 Timeline App</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      margin: 20px;
+      background-color: #0f172a;
+      color: #f8fafc;
+    }
+
+    #timeline-container {
+      width: 100%;
+      height: 450px;
+      background: #1e293b;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      cursor: grab;
+    }
+
+    #timeline-container:active {
+      cursor: grabbing;
+    }
+
+    .axis line, .axis path {
+      stroke: #475569;
+    }
+    .axis text {
+      fill: #94a3b8;
+      font-size: 11px;
+    }
+
+    .leader-line {
+      stroke: #475569;
+      stroke-width: 1px;
+      stroke-dasharray: 2,2;
+      pointer-events: none;
+    }
+
+    .event-node circle {
+      stroke-width: 2px;
+    }
+
+    .event-tier-1 circle { fill: #ef4444; stroke: #fca5a5; r: 6; }
+    .event-tier-2 circle { fill: #3b82f6; stroke: #93c5fd; r: 5; }
+    .event-tier-3 circle { fill: #10b981; stroke: #6ee7b7; r: 4; }
+
+    .event-label {
+      font-size: 11px;
+      font-weight: 500;
+      fill: #e2e8f0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <h2>D3 Timeline with Firebase</h2>
+  <div id="timeline-container"></div>
+
+  <script type="module" src="/main.js"></script>
+</body>
+</html>
