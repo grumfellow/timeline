@@ -1,24 +1,20 @@
 import * as d3 from 'd3';
 import { db } from './firebase.js';
-import { collection, getDocs } from 'firebase/firestore';
+import { getFirestore, collection, getDocs } from 'firebase/firestore';
 
-async function loadEvents() {
+// Fetch events for a specific timeline ID
+async function loadEvents(timelineId = "personal-timeline") {
   try {
-    const querySnapshot = await getDocs(collection(db, "events"));
+    const eventsRef = collection(db, "timelines", timelineId, "events");
+    const querySnapshot = await getDocs(eventsRef);
     const eventsData = [];
 
     querySnapshot.forEach((doc) => {
       const data = doc.data();
+      const rawDate = data.date || data.timestamp;
 
-      // Ensure timestamp field safely parses Firestore Timestamp, Date object, or String
-      let parsedDate;
-      if (data.date?.toDate) {
-        parsedDate = data.date.toDate();
-      } else if (data.date) {
-        parsedDate = new Date(data.date);
-      } else {
-        parsedDate = new Date();
-      }
+      let parsedDate = rawDate?.toDate ? rawDate.toDate() : new Date(rawDate);
+      if (isNaN(parsedDate.getTime())) return;
 
       eventsData.push({
         id: doc.id,
@@ -28,10 +24,48 @@ async function loadEvents() {
       });
     });
 
-    return eventsData.length > 0 ? eventsData : fallbackEvents;
+    return eventsData;
   } catch (error) {
-    console.error("Firestore fetch error, falling back to local data:", error);
-    return fallbackEvents;
+    console.error(`Error loading timeline '${timelineId}':`, error);
+    return [];
+  }
+}
+
+// Fetch all timeline documents from Firestore and populate the dropdown
+async function loadTimelineOptions() {
+  const selectEl = document.getElementById("timelineSelect");
+  if (!selectEl) return null;
+
+  try {
+    // 1. Fetch all parent documents in the 'timelines' collection
+    const timelinesSnapshot = await getDocs(collection(db, "timelines"));
+    
+    // Clear the hardcoded static HTML options
+    selectEl.innerHTML = "";
+
+    let firstTimelineId = null;
+
+    // 2. Loop through each timeline document
+    timelinesSnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      const option = document.createElement("option");
+      
+      // Store the doc ID (e.g., "personal-history") as the value
+      option.value = docSnap.id; 
+      // Display the nice title (e.g., "Personal History") as text
+      option.textContent = data.title || docSnap.id;
+      
+      selectEl.appendChild(option);
+
+      if (!firstTimelineId) {
+        firstTimelineId = docSnap.id;
+      }
+    });
+
+    return firstTimelineId;
+  } catch (error) {
+    console.error("Error loading timeline options from Firestore:", error);
+    return null;
   }
 }
 
@@ -120,26 +154,33 @@ function resolveStrictCollisions(visibleEvents, scale) {
   return items;
 }
 
-
 async function init() {
-  // 1. Fetch events from Firestore
-  const eventsData = await loadEvents();
+  // Populate dropdown with real Firestore timelines and get the first one's ID
+  const activeTimelineId = await loadTimelineOptions();
+  
+  if (!activeTimelineId) {
+    console.warn("No timelines found in Firestore!");
+    return;
+  }
 
-// 2. Calculate min/max dates and set domain BEFORE drawing
+  // Fetch events for the selected timeline
+  const eventsData = await loadEvents(activeTimelineId);
+
+  // Set up scale domain
   const extent = d3.extent(eventsData, d => d.date);
   if (extent[0] && extent[1]) {
     xBaseScale.domain([
-      d3.timeYear.offset(extent[0], -1), // 1 year buffer before earliest event
-      d3.timeYear.offset(extent[1], 1)  // 1 year buffer after latest event
+      d3.timeYear.offset(extent[0], -1),
+      d3.timeYear.offset(extent[1], 1)
     ]);
   }
-  // 3. Define zoom handler using the fetched eventsData
+
+  // Zoom setup & initial render
   function zoomed(event) {
     const newXScale = event.transform.rescaleX(xBaseScale);
     updateTimeline(newXScale, event.transform.k, eventsData);
   }
 
-  // 4. Attach zoom listener
   const zoom = d3.zoom()
     .scaleExtent([1, 80])
     .extent([[margin.left, 0], [width - margin.right, height]])
@@ -147,12 +188,29 @@ async function init() {
     .on("zoom", zoomed);
 
   svg.call(zoom);
-
-  // 5. Initial render with fetched data
   updateTimeline(xBaseScale, 1, eventsData);
+
+  // Re-fetch events when dropdown changes
+  const selectEl = document.getElementById("timelineSelect");
+  if (selectEl) {
+    selectEl.addEventListener("change", async (e) => {
+      const selectedId = e.target.value;
+      const newEvents = await loadEvents(selectedId);
+
+      const newExtent = d3.extent(newEvents, d => d.date);
+      if (newExtent[0] && newExtent[1]) {
+        xBaseScale.domain([
+          d3.timeYear.offset(newExtent[0], -1),
+          d3.timeYear.offset(newExtent[1], 1)
+        ]);
+      }
+
+      svg.call(zoom.transform, d3.zoomIdentity);
+      updateTimeline(xBaseScale, 1, newEvents);
+    });
+  }
 }
 
-// Execute initialization
 init();
 
 function updateTimeline(scale, zoomFactor, eventsData) {
@@ -204,3 +262,19 @@ function updateTimeline(scale, zoomFactor, eventsData) {
   allNodes.select("text").text(d => d.title);
   allNodes.attr("transform", d => `translate(${d.targetX}, ${d.y})`);
 }
+
+document.getElementById('timelineSelect').addEventListener('change', async (e) => {
+  const selectedId = e.target.value;
+  const newEvents = await loadEvents(selectedId);
+  
+  // Re-adjust axis extent & update D3 timeline
+  const extent = d3.extent(newEvents, d => d.date);
+  if (extent[0] && extent[1]) {
+    xBaseScale.domain([
+      d3.timeYear.offset(extent[0], -1),
+      d3.timeYear.offset(extent[1], 1)
+    ]);
+  }
+
+  updateTimeline(xBaseScale, 1, newEvents);
+});
