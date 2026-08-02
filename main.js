@@ -1,6 +1,256 @@
 import * as d3 from 'd3';
 import { db } from './firebase.js';
-import { getFirestore, collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, Timestamp } from 'firebase/firestore';
+
+const CREATE_TIMELINE_VALUE = "__create_new__";
+
+function slugify(text) {
+  return text.toLowerCase().trim().replace(/[^\w\s-]/g, "").replace(/[\s_-]+/g, "-");
+}
+
+function formatDateForInput(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+// Function to add a new event document to Firestore
+async function createEvent(timelineId, eventData) {
+  try {
+    const eventsRef = collection(db, "timelines", timelineId, "events");
+    const docRef = await addDoc(eventsRef, {
+      title: eventData.title,
+      date: Timestamp.fromDate(eventData.date),
+      tier: eventData.tier
+    });
+
+    console.log(`Successfully added event '${eventData.title}' with ID: ${docRef.id}`);
+    return { id: docRef.id, ...eventData };
+  } catch (error) {
+    console.error("Error creating event in Firestore:", error);
+    throw error;
+  }
+}
+
+async function updateEvent(timelineId, eventId, eventData) {
+  try {
+    const eventRef = doc(db, "timelines", timelineId, "events", eventId);
+    await updateDoc(eventRef, {
+      title: eventData.title,
+      date: Timestamp.fromDate(eventData.date),
+      tier: eventData.tier
+    });
+
+    console.log(`Successfully updated event '${eventData.title}' with ID: ${eventId}`);
+    return { id: eventId, ...eventData };
+  } catch (error) {
+    console.error("Error updating event in Firestore:", error);
+    throw error;
+  }
+}
+
+async function deleteEvent(timelineId, eventId) {
+  try {
+    const eventRef = doc(db, "timelines", timelineId, "events", eventId);
+    await deleteDoc(eventRef);
+    console.log(`Successfully deleted event with ID: ${eventId}`);
+  } catch (error) {
+    console.error("Error deleting event from Firestore:", error);
+    throw error;
+  }
+}
+
+// Wire up Modal UI & Form Listeners (add + edit)
+function setupEventModal(getCurrentTimelineId, onEventsChanged) {
+  const modal = document.getElementById("eventModal");
+  const openBtn = document.getElementById("openAddEventBtn");
+  const cancelBtn = document.getElementById("cancelModalBtn");
+  const form = document.getElementById("eventForm");
+  const modalTitle = document.getElementById("eventModalTitle");
+  const submitBtn = document.getElementById("eventSubmitBtn");
+  const deleteBtn = document.getElementById("deleteEventBtn");
+
+  if (!modal || !openBtn || !form) return null;
+
+  let editingEventId = null;
+
+  function closeModal() {
+    modal.style.display = "none";
+    form.reset();
+    editingEventId = null;
+    modalTitle.textContent = "Add New Event";
+    submitBtn.textContent = "Save Event";
+    if (deleteBtn) deleteBtn.style.display = "none";
+  }
+
+  function openAdd() {
+    editingEventId = null;
+    form.reset();
+    modalTitle.textContent = "Add New Event";
+    submitBtn.textContent = "Save Event";
+    if (deleteBtn) deleteBtn.style.display = "none";
+    modal.style.display = "flex";
+  }
+
+  function openEdit(event) {
+    editingEventId = event.id;
+    modalTitle.textContent = "Edit Event";
+    submitBtn.textContent = "Save";
+    document.getElementById("eventTitle").value = event.title;
+    document.getElementById("eventDate").value = formatDateForInput(event.date);
+    document.getElementById("eventTier").value = String(event.tier);
+    if (deleteBtn) deleteBtn.style.display = "inline-block";
+    modal.style.display = "flex";
+  }
+
+  openBtn.addEventListener("click", openAdd);
+  if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+
+  if (deleteBtn) {
+    const deleteConfirmModal = document.getElementById("deleteConfirmModal");
+    const deleteConfirmMessage = document.getElementById("deleteConfirmMessage");
+    const deleteConfirmCancelBtn = document.getElementById("deleteConfirmCancelBtn");
+    const deleteConfirmOkBtn = document.getElementById("deleteConfirmOkBtn");
+
+    function closeDeleteConfirm() {
+      if (deleteConfirmModal) deleteConfirmModal.style.display = "none";
+    }
+
+    deleteBtn.addEventListener("click", () => {
+      if (!editingEventId || !deleteConfirmModal || !deleteConfirmMessage) return;
+
+      const title = document.getElementById("eventTitle").value.trim() || "this event";
+      deleteConfirmMessage.textContent = `Delete "${title}"? This cannot be undone.`;
+      deleteConfirmModal.style.display = "flex";
+    });
+
+    if (deleteConfirmCancelBtn) {
+      deleteConfirmCancelBtn.addEventListener("click", closeDeleteConfirm);
+    }
+
+    if (deleteConfirmOkBtn) {
+      deleteConfirmOkBtn.addEventListener("click", async () => {
+        if (!editingEventId) {
+          closeDeleteConfirm();
+          return;
+        }
+
+        const activeTimelineId = getCurrentTimelineId();
+        if (!activeTimelineId) {
+          alert("Please select a timeline first.");
+          closeDeleteConfirm();
+          return;
+        }
+
+        try {
+          await deleteEvent(activeTimelineId, editingEventId);
+          closeDeleteConfirm();
+          closeModal();
+          onEventsChanged();
+        } catch (err) {
+          alert("Failed to delete event. Check console for details.");
+          closeDeleteConfirm();
+        }
+      });
+    }
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const activeTimelineId = getCurrentTimelineId();
+    if (!activeTimelineId) {
+      alert("Please select a timeline first.");
+      return;
+    }
+
+    const titleInput = document.getElementById("eventTitle").value.trim();
+    const dateInput = document.getElementById("eventDate").value;
+    const tierInput = Number(document.getElementById("eventTier").value) || 1;
+
+    if (!titleInput || !dateInput) return;
+
+    const [year, month, day] = dateInput.split("-");
+    const eventDate = new Date(year, month - 1, day);
+    const payload = { title: titleInput, date: eventDate, tier: tierInput };
+
+    try {
+      if (editingEventId) {
+        await updateEvent(activeTimelineId, editingEventId, payload);
+      } else {
+        await createEvent(activeTimelineId, payload);
+      }
+
+      closeModal();
+      onEventsChanged();
+    } catch (err) {
+      alert(`Failed to ${editingEventId ? "update" : "save"} event. Check console for details.`);
+    }
+  });
+
+  return { openAdd, openEdit };
+}
+
+async function createTimeline(title) {
+  const cleanTitle = title.trim();
+  const timelineId = slugify(cleanTitle);
+  if (!timelineId) throw new Error("Invalid timeline title");
+
+  const timelineRef = doc(db, "timelines", timelineId);
+  await setDoc(timelineRef, {
+    title: cleanTitle,
+    createdAt: Timestamp.now()
+  }, { merge: true });
+
+  console.log(`Successfully created timeline '${cleanTitle}' with ID: ${timelineId}`);
+  return timelineId;
+}
+
+function setupTimelineModal(onTimelineCreated) {
+  const modal = document.getElementById("timelineModal");
+  const form = document.getElementById("timelineForm");
+  const cancelBtn = document.getElementById("cancelTimelineBtn");
+
+  if (!modal || !form) return null;
+
+  let restoreTimelineId = null;
+
+  function close(restoreSelection = true) {
+    modal.style.display = "none";
+    form.reset();
+    if (restoreSelection && restoreTimelineId) {
+      const selectEl = document.getElementById("timelineSelect");
+      if (selectEl) selectEl.value = restoreTimelineId;
+    }
+  }
+
+  function open(previousTimelineId) {
+    restoreTimelineId = previousTimelineId || null;
+    form.reset();
+    modal.style.display = "flex";
+    document.getElementById("timelineTitle")?.focus();
+  }
+
+  if (cancelBtn) cancelBtn.addEventListener("click", () => close(true));
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const titleInput = document.getElementById("timelineTitle").value.trim();
+    if (!titleInput) return;
+
+    try {
+      const newTimelineId = await createTimeline(titleInput);
+      close(false);
+      onTimelineCreated(newTimelineId);
+    } catch (err) {
+      alert("Failed to create timeline. Check console for details.");
+    }
+  });
+
+  return { open };
+}
 
 // Fetch events for a specific timeline ID
 async function loadEvents(timelineId = "personal-timeline") {
@@ -32,29 +282,24 @@ async function loadEvents(timelineId = "personal-timeline") {
 }
 
 // Fetch all timeline documents from Firestore and populate the dropdown
-async function loadTimelineOptions() {
+async function loadTimelineOptions(selectedId = null) {
   const selectEl = document.getElementById("timelineSelect");
   if (!selectEl) return null;
 
   try {
-    // 1. Fetch all parent documents in the 'timelines' collection
     const timelinesSnapshot = await getDocs(collection(db, "timelines"));
-    
-    // Clear the hardcoded static HTML options
+
     selectEl.innerHTML = "";
 
     let firstTimelineId = null;
 
-    // 2. Loop through each timeline document
     timelinesSnapshot.forEach((docSnap) => {
       const data = docSnap.data();
       const option = document.createElement("option");
-      
-      // Store the doc ID (e.g., "personal-history") as the value
-      option.value = docSnap.id; 
-      // Display the nice title (e.g., "Personal History") as text
+
+      option.value = docSnap.id;
       option.textContent = data.title || docSnap.id;
-      
+
       selectEl.appendChild(option);
 
       if (!firstTimelineId) {
@@ -62,11 +307,249 @@ async function loadTimelineOptions() {
       }
     });
 
-    return firstTimelineId;
+    const createOption = document.createElement("option");
+    createOption.value = CREATE_TIMELINE_VALUE;
+    createOption.textContent = "+ Create New Timeline...";
+    selectEl.appendChild(createOption);
+
+    const idToSelect = selectedId && selectedId !== CREATE_TIMELINE_VALUE
+      ? selectedId
+      : firstTimelineId;
+
+    if (idToSelect) {
+      selectEl.value = idToSelect;
+      return idToSelect;
+    }
+
+    return null;
   } catch (error) {
     console.error("Error loading timeline options from Firestore:", error);
     return null;
   }
+}
+
+function parseCSVLine(line) {
+  const result = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === "," && !inQuotes) {
+      result.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+
+  result.push(current);
+  return result;
+}
+
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+
+  const headers = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase());
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+
+    const values = parseCSVLine(lines[i]);
+    const row = {};
+    headers.forEach((header, idx) => {
+      row[header] = values[idx]?.trim() ?? "";
+    });
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function parseEventDate(dateStr) {
+  if (!dateStr) return null;
+
+  const trimmed = dateStr.trim();
+  const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slashMatch) {
+    const [, month, day, year] = slashMatch;
+    const dateObj = new Date(Number(year), Number(month) - 1, Number(day));
+    return isNaN(dateObj.getTime()) ? null : dateObj;
+  }
+
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    const dateObj = new Date(Number(year), Number(month) - 1, Number(day));
+    return isNaN(dateObj.getTime()) ? null : dateObj;
+  }
+
+  const dateObj = new Date(trimmed);
+  return isNaN(dateObj.getTime()) ? null : dateObj;
+}
+
+async function importEventsToTimeline(timelineId, rows) {
+  const results = { imported: 0, skipped: 0, skippedRows: [] };
+  const validEvents = [];
+
+  for (const row of rows) {
+    const title = (row.title || "").trim() || "Untitled Event";
+    const dateObj = parseEventDate(row.date);
+
+    if (!dateObj) {
+      results.skipped++;
+      results.skippedRows.push(`"${title}" (invalid date: "${row.date || ""}")`);
+      continue;
+    }
+
+    validEvents.push({
+      title,
+      date: dateObj,
+      tier: Number(row.tier) || 1
+    });
+  }
+
+  const BATCH_SIZE = 500;
+  for (let i = 0; i < validEvents.length; i += BATCH_SIZE) {
+    const batch = writeBatch(db);
+    const chunk = validEvents.slice(i, i + BATCH_SIZE);
+
+    for (const event of chunk) {
+      const eventRef = doc(collection(db, "timelines", timelineId, "events"));
+      batch.set(eventRef, {
+        title: event.title,
+        date: Timestamp.fromDate(event.date),
+        tier: event.tier
+      });
+    }
+
+    await batch.commit();
+    results.imported += chunk.length;
+  }
+
+  return results;
+}
+
+function setupCsvImport(getCurrentTimelineId, onImportComplete) {
+  const openBtn = document.getElementById("openImportCsvBtn");
+  const modal = document.getElementById("csvImportModal");
+  const form = document.getElementById("csvImportForm");
+  const cancelBtn = document.getElementById("cancelCsvImportBtn");
+  const fileInput = document.getElementById("csvFileInput");
+  const statusEl = document.getElementById("csvImportStatus");
+  const importBtn = document.getElementById("csvImportBtn");
+
+  if (!openBtn || !modal || !form || !fileInput) return;
+
+  function closeModal() {
+    modal.style.display = "none";
+    form.reset();
+    if (statusEl) {
+      statusEl.style.display = "none";
+      statusEl.textContent = "";
+    }
+    if (importBtn) importBtn.disabled = false;
+  }
+
+  function openModal() {
+    form.reset();
+    if (statusEl) {
+      statusEl.style.display = "none";
+      statusEl.textContent = "";
+    }
+    if (importBtn) importBtn.disabled = false;
+    modal.style.display = "flex";
+  }
+
+  openBtn.addEventListener("click", () => {
+    openModal();
+    if (!getCurrentTimelineId() && statusEl) {
+      statusEl.style.display = "block";
+      statusEl.style.color = "#b45309";
+      statusEl.textContent = "Please select a timeline before importing.";
+    }
+  });
+
+  if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const activeTimelineId = getCurrentTimelineId();
+    if (!activeTimelineId) {
+      if (statusEl) {
+        statusEl.style.display = "block";
+        statusEl.style.color = "#b45309";
+        statusEl.textContent = "Please select a timeline before importing.";
+      }
+      return;
+    }
+
+    const file = fileInput.files?.[0];
+    if (!file) {
+      if (statusEl) {
+        statusEl.style.display = "block";
+        statusEl.style.color = "#b45309";
+        statusEl.textContent = "Please choose a CSV file to import.";
+      }
+      return;
+    }
+
+    if (importBtn) importBtn.disabled = true;
+    if (statusEl) {
+      statusEl.style.display = "block";
+      statusEl.style.color = "#334155";
+      statusEl.textContent = "Importing events...";
+    }
+
+    try {
+      const text = await file.text();
+      const rows = parseCSV(text);
+
+      if (rows.length === 0) {
+        if (statusEl) {
+          statusEl.style.color = "#b45309";
+          statusEl.textContent = "No data rows found in the CSV file.";
+        }
+        if (importBtn) importBtn.disabled = false;
+        return;
+      }
+
+      const results = await importEventsToTimeline(activeTimelineId, rows);
+
+      let message = `Imported ${results.imported} event${results.imported === 1 ? "" : "s"}.`;
+      if (results.skipped > 0) {
+        message += ` Skipped ${results.skipped} row${results.skipped === 1 ? "" : "s"} with invalid dates.`;
+      }
+
+      if (statusEl) {
+        statusEl.style.color = results.skipped > 0 ? "#b45309" : "#15803d";
+        statusEl.textContent = message;
+      }
+
+      if (results.imported > 0) {
+        onImportComplete();
+      }
+
+      if (importBtn) importBtn.disabled = false;
+    } catch (err) {
+      console.error("CSV import failed:", err);
+      if (statusEl) {
+        statusEl.style.color = "#b45309";
+        statusEl.textContent = "Failed to import CSV. Check console for details.";
+      }
+      if (importBtn) importBtn.disabled = false;
+    }
+  });
 }
 
 const container = document.getElementById("timeline-container");
@@ -101,6 +584,8 @@ const gAxis = svg.append("g")
 
 const gLines = svg.append("g").attr("class", "lines-group");
 const gEvents = svg.append("g").attr("class", "events-group");
+
+let openEditEventModal = null;
 
 const formatMillisecond = d3.timeFormat(".%L"),
       formatSecond      = d3.timeFormat(":%S"),
@@ -155,30 +640,50 @@ function resolveStrictCollisions(visibleEvents, scale) {
 }
 
 async function init() {
-  // Populate dropdown with real Firestore timelines and get the first one's ID
-  const activeTimelineId = await loadTimelineOptions();
-  
-  if (!activeTimelineId) {
-    console.warn("No timelines found in Firestore!");
-    return;
+  let activeTimelineId = await loadTimelineOptions();
+  let previousTimelineId = activeTimelineId;
+  let eventsData = activeTimelineId ? await loadEvents(activeTimelineId) : [];
+  let currentTransform = d3.zoomIdentity;
+
+  const keywordInput = document.getElementById("keywordFilterInput");
+
+  function getFilteredEvents() {
+    const query = keywordInput ? keywordInput.value.trim().toLowerCase() : "";
+    if (!query) return eventsData;
+    return eventsData.filter(d => d.title.toLowerCase().includes(query));
   }
 
-  // Fetch events for the selected timeline
-  const eventsData = await loadEvents(activeTimelineId);
-
-  // Set up scale domain
-  const extent = d3.extent(eventsData, d => d.date);
-  if (extent[0] && extent[1]) {
-    xBaseScale.domain([
-      d3.timeYear.offset(extent[0], -1),
-      d3.timeYear.offset(extent[1], 1)
-    ]);
+  function renderCurrentTimeline() {
+    const filtered = getFilteredEvents();
+    const currentScale = currentTransform.rescaleX(xBaseScale);
+    updateTimeline(currentScale, currentTransform.k, filtered);
   }
 
-  // Zoom setup & initial render
+  function refreshChart(data) {
+    const extent = d3.extent(data, d => d.date);
+    if (extent[0] && extent[1]) {
+      xBaseScale.domain([
+        d3.timeYear.offset(extent[0], -1),
+        d3.timeYear.offset(extent[1], 1)
+      ]);
+    } else {
+      xBaseScale.domain([new Date(1960, 0, 1), new Date(2030, 0, 1)]);
+    }
+    currentTransform = d3.zoomIdentity;
+    svg.call(zoom.transform, d3.zoomIdentity);
+    updateTimeline(xBaseScale, 1, getFilteredEvents());
+  }
+
   function zoomed(event) {
+    currentTransform = event.transform;
     const newXScale = event.transform.rescaleX(xBaseScale);
-    updateTimeline(newXScale, event.transform.k, eventsData);
+    updateTimeline(newXScale, event.transform.k, getFilteredEvents());
+  }
+
+  if (keywordInput) {
+    keywordInput.addEventListener("input", () => {
+      renderCurrentTimeline();
+    });
   }
 
   const zoom = d3.zoom()
@@ -188,27 +693,53 @@ async function init() {
     .on("zoom", zoomed);
 
   svg.call(zoom);
-  updateTimeline(xBaseScale, 1, eventsData);
+  refreshChart(eventsData);
 
-  // Re-fetch events when dropdown changes
   const selectEl = document.getElementById("timelineSelect");
+
+  const timelineModal = setupTimelineModal(async (newTimelineId) => {
+    activeTimelineId = newTimelineId;
+    previousTimelineId = newTimelineId;
+    await loadTimelineOptions(newTimelineId);
+    eventsData = [];
+    refreshChart(eventsData);
+  });
+
   if (selectEl) {
     selectEl.addEventListener("change", async (e) => {
-      const selectedId = e.target.value;
-      const newEvents = await loadEvents(selectedId);
+      const selected = e.target.value;
 
-      const newExtent = d3.extent(newEvents, d => d.date);
-      if (newExtent[0] && newExtent[1]) {
-        xBaseScale.domain([
-          d3.timeYear.offset(newExtent[0], -1),
-          d3.timeYear.offset(newExtent[1], 1)
-        ]);
+      if (selected === CREATE_TIMELINE_VALUE) {
+        if (timelineModal) timelineModal.open(previousTimelineId);
+        return;
       }
 
-      svg.call(zoom.transform, d3.zoomIdentity);
-      updateTimeline(xBaseScale, 1, newEvents);
+      previousTimelineId = selected;
+      activeTimelineId = selected;
+      eventsData = await loadEvents(activeTimelineId);
+      refreshChart(eventsData);
     });
   }
+
+  const eventModal = setupEventModal(
+    () => activeTimelineId,
+    async () => {
+      eventsData = await loadEvents(activeTimelineId);
+      refreshChart(eventsData);
+    }
+  );
+
+  if (eventModal) {
+    openEditEventModal = eventModal.openEdit;
+  }
+
+  setupCsvImport(
+    () => activeTimelineId,
+    async () => {
+      eventsData = await loadEvents(activeTimelineId);
+      refreshChart(eventsData);
+    }
+  );
 }
 
 init();
@@ -260,21 +791,20 @@ function updateTimeline(scale, zoomFactor, eventsData) {
   const allNodes = enterNodes.merge(nodes);
 
   allNodes.select("text").text(d => d.title);
-  allNodes.attr("transform", d => `translate(${d.targetX}, ${d.y})`);
+  allNodes
+    .attr("class", d => `event-node event-tier-${d.tier}`)
+    .attr("transform", d => `translate(${d.targetX}, ${d.y})`);
+
+  const handleEventClick = (event, d) => {
+    event.stopPropagation();
+    if (openEditEventModal) openEditEventModal(d);
+  };
+
+  allNodes.select("circle")
+    .style("cursor", "pointer")
+    .on("click", handleEventClick);
+
+  allNodes.select("text")
+    .style("cursor", "pointer")
+    .on("click", handleEventClick);
 }
-
-document.getElementById('timelineSelect').addEventListener('change', async (e) => {
-  const selectedId = e.target.value;
-  const newEvents = await loadEvents(selectedId);
-  
-  // Re-adjust axis extent & update D3 timeline
-  const extent = d3.extent(newEvents, d => d.date);
-  if (extent[0] && extent[1]) {
-    xBaseScale.domain([
-      d3.timeYear.offset(extent[0], -1),
-      d3.timeYear.offset(extent[1], 1)
-    ]);
-  }
-
-  updateTimeline(xBaseScale, 1, newEvents);
-});
