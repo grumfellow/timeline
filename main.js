@@ -19,11 +19,17 @@ function formatDateForInput(date) {
 async function createEvent(timelineId, eventData) {
   try {
     const eventsRef = collection(db, "timelines", timelineId, "events");
-    const docRef = await addDoc(eventsRef, {
+    const docData = {
       title: eventData.title,
       date: Timestamp.fromDate(eventData.date),
-      tier: eventData.tier
-    });
+      tier: eventData.tier,
+      tags: eventData.tags || []
+    };
+    if (eventData.endDate) {
+      docData.endDate = Timestamp.fromDate(eventData.endDate);
+    }
+
+    const docRef = await addDoc(eventsRef, docData);
 
     console.log(`Successfully added event '${eventData.title}' with ID: ${docRef.id}`);
     return { id: docRef.id, ...eventData };
@@ -36,11 +42,19 @@ async function createEvent(timelineId, eventData) {
 async function updateEvent(timelineId, eventId, eventData) {
   try {
     const eventRef = doc(db, "timelines", timelineId, "events", eventId);
-    await updateDoc(eventRef, {
+    const docData = {
       title: eventData.title,
       date: Timestamp.fromDate(eventData.date),
-      tier: eventData.tier
-    });
+      tier: eventData.tier,
+      tags: eventData.tags || []
+    };
+    if (eventData.endDate) {
+      docData.endDate = Timestamp.fromDate(eventData.endDate);
+    } else {
+      docData.endDate = null;
+    }
+
+    await updateDoc(eventRef, docData);
 
     console.log(`Successfully updated event '${eventData.title}' with ID: ${eventId}`);
     return { id: eventId, ...eventData };
@@ -93,13 +107,15 @@ function setupEventModal(getCurrentTimelineId, onEventsChanged) {
     modal.style.display = "flex";
   }
 
-  function openEdit(event) {
+        function openEdit(event) {
     editingEventId = event.id;
     modalTitle.textContent = "Edit Event";
     submitBtn.textContent = "Save";
     document.getElementById("eventTitle").value = event.title;
     document.getElementById("eventDate").value = formatDateForInput(event.date);
+    document.getElementById("eventEndDate").value = event.endDate ? formatDateForInput(event.endDate) : "";
     document.getElementById("eventTier").value = String(event.tier);
+    document.getElementById("eventTags").value = (event.tags || []).join(", ");
     if (deleteBtn) deleteBtn.style.display = "inline-block";
     modal.style.display = "flex";
   }
@@ -165,15 +181,33 @@ function setupEventModal(getCurrentTimelineId, onEventsChanged) {
       return;
     }
 
-    const titleInput = document.getElementById("eventTitle").value.trim();
+                const titleInput = document.getElementById("eventTitle").value.trim();
     const dateInput = document.getElementById("eventDate").value;
+    const endDateInput = document.getElementById("eventEndDate").value;
     const tierInput = Number(document.getElementById("eventTier").value) || 1;
+    const tagsInput = document.getElementById("eventTags").value
+      .split(",")
+      .map(t => t.trim())
+      .filter(t => t.length > 0);
 
     if (!titleInput || !dateInput) return;
 
     const [year, month, day] = dateInput.split("-");
     const eventDate = new Date(year, month - 1, day);
-    const payload = { title: titleInput, date: eventDate, tier: tierInput };
+
+    let eventEndDate = null;
+    if (endDateInput) {
+      const [ey, em, ed] = endDateInput.split("-");
+      eventEndDate = new Date(ey, em - 1, ed);
+    }
+
+    const payload = { 
+      title: titleInput, 
+      date: eventDate, 
+      endDate: eventEndDate,
+      tier: tierInput, 
+      tags: tagsInput 
+    };
 
     try {
       if (editingEventId) {
@@ -263,14 +297,28 @@ async function loadEvents(timelineId = "personal-timeline") {
       const data = doc.data();
       const rawDate = data.date || data.timestamp;
 
-      let parsedDate = rawDate?.toDate ? rawDate.toDate() : new Date(rawDate);
+                  let parsedDate = rawDate?.toDate ? rawDate.toDate() : new Date(rawDate);
       if (isNaN(parsedDate.getTime())) return;
+
+      const rawEndDate = data.endDate || data.end_date;
+      let parsedEndDate = null;
+      if (rawEndDate) {
+        const d = rawEndDate?.toDate ? rawEndDate.toDate() : new Date(rawEndDate);
+        if (!isNaN(d.getTime())) parsedEndDate = d;
+      }
+
+      const rawTags = Array.isArray(data.tags) 
+        ? data.tags 
+        : (typeof data.tags === 'string' ? data.tags.split(',') : []);
+      const tags = rawTags.map(t => String(t).trim()).filter(Boolean);
 
       eventsData.push({
         id: doc.id,
         title: data.title || "Untitled Event",
         date: parsedDate,
-        tier: Number(data.tier) || 1
+        endDate: parsedEndDate,
+        tier: Number(data.tier) || 1,
+        tags: tags
       });
     });
 
@@ -401,20 +449,29 @@ async function importEventsToTimeline(timelineId, rows) {
   const results = { imported: 0, skipped: 0, skippedRows: [] };
   const validEvents = [];
 
-  for (const row of rows) {
-    const title = (row.title || "").trim() || "Untitled Event";
-    const dateObj = parseEventDate(row.date);
+    for (const row of rows) {
+        const title = (row.title || "").trim() || "Untitled Event";
+    const dateObj = parseEventDate(row.date || row.start_date);
 
     if (!dateObj) {
       results.skipped++;
-      results.skippedRows.push(`"${title}" (invalid date: "${row.date || ""}")`);
+      results.skippedRows.push(`"${title}" (invalid date: "${row.date || row.start_date || ""}")`);
       continue;
     }
+
+    const endDateObj = parseEventDate(row.end_date || row.enddate);
+
+    const tags = (row.tags || row.tag || "")
+      .split(",")
+      .map(t => t.trim())
+      .filter(Boolean);
 
     validEvents.push({
       title,
       date: dateObj,
-      tier: Number(row.tier) || 1
+      endDate: endDateObj,
+      tier: Number(row.tier) || 1,
+      tags
     });
   }
 
@@ -423,13 +480,18 @@ async function importEventsToTimeline(timelineId, rows) {
     const batch = writeBatch(db);
     const chunk = validEvents.slice(i, i + BATCH_SIZE);
 
-    for (const event of chunk) {
-      const eventRef = doc(collection(db, "timelines", timelineId, "events"));
-      batch.set(eventRef, {
+        for (const event of chunk) {
+            const eventRef = doc(collection(db, "timelines", timelineId, "events"));
+      const docData = {
         title: event.title,
         date: Timestamp.fromDate(event.date),
-        tier: event.tier
-      });
+        tier: event.tier,
+        tags: event.tags || []
+      };
+      if (event.endDate) {
+        docData.endDate = Timestamp.fromDate(event.endDate);
+      }
+      batch.set(eventRef, docData);
     }
 
     await batch.commit();
@@ -613,17 +675,30 @@ function resolveStrictCollisions(visibleEvents, scale) {
 
   const items = visibleEvents.map(d => {
     const textW = getTextWidth(d.title);
-    const targetX = scale(d.date);
+    const startX = scale(d.date);
+    const endX = d.endDate ? scale(d.endDate) : startX;
+    const isRange = d.endDate && endX > startX;
+
+    // Anchor point for leader line: mid-point if range, startX if single date
+    const targetX = isRange ? (startX + endX) / 2 : startX;
+
+    // Boundary for horizontal collision avoidance
+    const minLeft = Math.min(startX, endX) - 10;
+    const maxRight = Math.max(startX, endX) + 10 + textW + horizontalBuffer;
+
     return {
       ...d,
-      targetX: targetX,
-      left: targetX - 10,
-      right: targetX + 10 + textW + horizontalBuffer,
+      targetX,
+      startX,
+      endX,
+      isRange,
+      left: minLeft,
+      right: maxRight,
       y: baseY
     };
   });
 
-  items.sort((a, b) => a.targetX - b.targetX);
+  items.sort((a, b) => a.startX - b.startX);
 
   const laneRightEdges = [];
 
@@ -644,13 +719,69 @@ async function init() {
   let previousTimelineId = activeTimelineId;
   let eventsData = activeTimelineId ? await loadEvents(activeTimelineId) : [];
   let currentTransform = d3.zoomIdentity;
+  let selectedTags = new Set();
 
   const keywordInput = document.getElementById("keywordFilterInput");
+  const tagFilterContainer = document.getElementById("tagFilterContainer");
+
+  function renderTagBadges() {
+    if (!tagFilterContainer) return;
+    tagFilterContainer.innerHTML = "";
+
+    // Extract all unique tags across events in the timeline
+    const allTags = new Set();
+    eventsData.forEach(event => {
+      (event.tags || []).forEach(tag => allTags.add(tag));
+    });
+
+    const sortedTags = Array.from(allTags).sort((a, b) => a.localeCompare(b));
+
+    if (sortedTags.length === 0) {
+      tagFilterContainer.innerHTML = `<span style="font-size: 12px; color: #64748b;">No tags</span>`;
+      selectedTags.clear();
+      return;
+    }
+
+    sortedTags.forEach(tag => {
+      const badge = document.createElement("span");
+      badge.className = `tag-badge${selectedTags.has(tag) ? " active" : ""}`;
+      badge.textContent = tag;
+
+      badge.addEventListener("click", () => {
+        if (selectedTags.has(tag)) {
+          selectedTags.delete(tag);
+        } else {
+          selectedTags.add(tag);
+        }
+        renderTagBadges();
+        renderCurrentTimeline();
+      });
+
+      tagFilterContainer.appendChild(badge);
+    });
+  }
 
   function getFilteredEvents() {
+    let filtered = eventsData;
+
+        // Filter by selected tags (match events that contain AT LEAST ONE selected tag)
+    if (selectedTags.size > 0) {
+      filtered = filtered.filter(event => {
+        const eventTags = new Set((event.tags || []).map(t => t.toLowerCase()));
+        return Array.from(selectedTags).some(tag => eventTags.has(tag.toLowerCase()));
+      });
+    }
+
+    // Filter by keyword query
     const query = keywordInput ? keywordInput.value.trim().toLowerCase() : "";
-    if (!query) return eventsData;
-    return eventsData.filter(d => d.title.toLowerCase().includes(query));
+    if (query) {
+      filtered = filtered.filter(d => 
+        d.title.toLowerCase().includes(query) ||
+        (d.tags || []).some(t => t.toLowerCase().includes(query))
+      );
+    }
+
+    return filtered;
   }
 
   function renderCurrentTimeline() {
@@ -660,6 +791,9 @@ async function init() {
   }
 
   function refreshChart(data) {
+    selectedTags.clear();
+    renderTagBadges();
+
     const extent = d3.extent(data, d => d.date);
     if (extent[0] && extent[1]) {
       xBaseScale.domain([
@@ -772,7 +906,7 @@ function updateTimeline(scale, zoomFactor, eventsData) {
     .attr("x2", d => d.targetX)
     .attr("y2", d => d.y);
 
-  const nodes = gEvents.selectAll(".event-node")
+    const nodes = gEvents.selectAll(".event-node")
     .data(positionedNodes, d => d.id);
 
   nodes.exit().remove();
@@ -781,16 +915,34 @@ function updateTimeline(scale, zoomFactor, eventsData) {
     .append("g")
     .attr("class", d => `event-node event-tier-${d.tier}`);
 
+  // Dot for single events
   enterNodes.append("circle");
+
+  // Line segment for range events
+  enterNodes.append("line")
+    .attr("class", "range-line");
   
   enterNodes.append("text")
     .attr("class", "event-label")
-    .attr("x", 8)
     .attr("dy", "0.35em");
 
   const allNodes = enterNodes.merge(nodes);
 
-  allNodes.select("text").text(d => d.title);
+  // Toggle circle vs range-line visibility based on whether event has a range
+  allNodes.select("circle")
+    .style("display", d => d.isRange ? "none" : "block");
+
+  allNodes.select("line.range-line")
+    .style("display", d => d.isRange ? "block" : "none")
+    .attr("x1", d => d.startX - d.targetX)
+    .attr("y1", 0)
+    .attr("x2", d => d.endX - d.targetX)
+    .attr("y2", 0);
+
+  allNodes.select("text")
+    .text(d => d.title)
+    .attr("x", d => d.isRange ? (d.endX - d.targetX) + 8 : 8);
+
   allNodes
     .attr("class", d => `event-node event-tier-${d.tier}`)
     .attr("transform", d => `translate(${d.targetX}, ${d.y})`);
@@ -801,6 +953,10 @@ function updateTimeline(scale, zoomFactor, eventsData) {
   };
 
   allNodes.select("circle")
+    .style("cursor", "pointer")
+    .on("click", handleEventClick);
+
+  allNodes.select("line.range-line")
     .style("cursor", "pointer")
     .on("click", handleEventClick);
 

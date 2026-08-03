@@ -45,9 +45,13 @@
       stroke-width: 2px;
     }
 
-    .event-tier-1 circle { fill: #ef4444; stroke: #fca5a5; r: 6; }
+        .event-tier-1 circle { fill: #ef4444; stroke: #fca5a5; r: 6; }
     .event-tier-2 circle { fill: #3b82f6; stroke: #93c5fd; r: 5; }
     .event-tier-3 circle { fill: #10b981; stroke: #6ee7b7; r: 4; }
+
+    .event-tier-1 line.range-line { stroke: #ef4444; stroke-width: 4px; stroke-linecap: round; }
+    .event-tier-2 line.range-line { stroke: #3b82f6; stroke-width: 4px; stroke-linecap: round; }
+    .event-tier-3 line.range-line { stroke: #10b981; stroke-width: 4px; stroke-linecap: round; }
 
     .event-label {
       font-size: 11px;
@@ -56,8 +60,32 @@
       cursor: pointer;
     }
 
-    .event-node {
+        .event-node {
       cursor: pointer;
+    }
+
+    .tag-badge {
+      padding: 3px 8px;
+      font-size: 12px;
+      border-radius: 12px;
+      border: 1px solid #475569;
+      background: #1e293b;
+      color: #94a3b8;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.15s ease;
+    }
+
+    .tag-badge:hover {
+      border-color: #38bdf8;
+      color: #38bdf8;
+    }
+
+    .tag-badge.active {
+      background: #0284c7;
+      border-color: #38bdf8;
+      color: #ffffff;
+      font-weight: 500;
     }
   </style>
 </head>
@@ -74,7 +102,7 @@
 
   <div id="timeline-container"></div>
 
-  <!-- Event Creation Controls -->
+    <!-- Event Creation Controls -->
   <div class="timeline-controls" style="margin: 15px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
     <button id="openAddEventBtn" style="padding: 8px 16px; font-weight: bold; cursor: pointer;">
       + Add New Event
@@ -82,40 +110,56 @@
     <button id="openImportCsvBtn" style="padding: 8px 16px; cursor: pointer;">
       Import CSV
     </button>
-    <div style="margin-left: auto; display: flex; align-items: center; gap: 6px;">
-      <label for="keywordFilterInput" style="font-size: 14px; color: #94a3b8;">Filter:</label>
-      <input 
-        type="text" 
-        id="keywordFilterInput" 
-        placeholder="Filter by keyword..." 
-        style="padding: 6px 12px; border: 1px solid #475569; border-radius: 4px; background: #1e293b; color: #f8fafc; font-size: 14px; outline: none; width: 200px;"
-      />
+    <div style="margin-left: auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <span style="font-size: 14px; color: #94a3b8;">Tags:</span>
+        <div id="tagFilterContainer" style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center;"></div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <label for="keywordFilterInput" style="font-size: 14px; color: #94a3b8;">Filter:</label>
+        <input 
+          type="text" 
+          id="keywordFilterInput" 
+          placeholder="Filter by keyword..." 
+          style="padding: 6px 12px; border: 1px solid #475569; border-radius: 4px; background: #1e293b; color: #f8fafc; font-size: 14px; outline: none; width: 180px;"
+        />
+      </div>
     </div>
   </div>
 
 <!-- Add Event Modal -->
 <div id="eventModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
-  <div style="background: #fff; padding: 24px; border-radius: 8px; width: 360px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
-    <h3 id="eventModalTitle" style="margin-top: 0;">Add New Event</h3>
+  <div style="background: #ffffff; color: #0f172a; padding: 24px; border-radius: 8px; width: 360px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
+    <h3 id="eventModalTitle" style="margin-top: 0; color: #0f172a;">Add New Event</h3>
     
     <form id="eventForm">
       <div style="margin-bottom: 12px;">
-        <label for="eventTitle" style="display: block; font-weight: bold; margin-bottom: 4px;">Title</label>
-        <input type="text" id="eventTitle" required style="width: 100%; padding: 8px; box-sizing: border-box;" placeholder="e.g., Apollo 11 Landing" />
+        <label for="eventTitle" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">Title</label>
+        <input type="text" id="eventTitle" required style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; color: #0f172a;" placeholder="e.g., Apollo 11 Landing" />
       </div>
 
       <div style="margin-bottom: 12px;">
-        <label for="eventDate" style="display: block; font-weight: bold; margin-bottom: 4px;">Date</label>
-        <input type="date" id="eventDate" required style="width: 100%; padding: 8px; box-sizing: border-box;" />
+        <label for="eventDate" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">Start Date</label>
+        <input type="date" id="eventDate" required style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; color: #0f172a;" />
+      </div>
+
+      <div style="margin-bottom: 12px;">
+        <label for="eventEndDate" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">End Date (Optional)</label>
+        <input type="date" id="eventEndDate" style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; color: #0f172a;" />
       </div>
 
       <div style="margin-bottom: 16px;">
-        <label for="eventTier" style="display: block; font-weight: bold; margin-bottom: 4px;">Tier / Importance (1-3)</label>
-        <select id="eventTier" style="width: 100%; padding: 8px;">
+        <label for="eventTier" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">Tier / Importance (1-3)</label>
+        <select id="eventTier" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; color: #0f172a;">
           <option value="1">Tier 1 (Major Milestone)</option>
           <option value="2">Tier 2 (Secondary Event)</option>
           <option value="3">Tier 3 (Detail Event)</option>
         </select>
+      </div>
+
+      <div style="margin-bottom: 16px;">
+        <label for="eventTags" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">Tags (comma-separated)</label>
+        <input type="text" id="eventTags" style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; color: #0f172a;" placeholder="e.g., science, space, moon" />
       </div>
 
       <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
@@ -131,13 +175,13 @@
 
 <!-- Create Timeline Modal -->
 <div id="timelineModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
-  <div style="background: #fff; padding: 24px; border-radius: 8px; width: 360px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
-    <h3 style="margin-top: 0;">Create New Timeline</h3>
+  <div style="background: #ffffff; color: #0f172a; padding: 24px; border-radius: 8px; width: 360px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
+    <h3 style="margin-top: 0; color: #0f172a;">Create New Timeline</h3>
 
     <form id="timelineForm">
       <div style="margin-bottom: 16px;">
-        <label for="timelineTitle" style="display: block; font-weight: bold; margin-bottom: 4px;">Timeline Title</label>
-        <input type="text" id="timelineTitle" required style="width: 100%; padding: 8px; box-sizing: border-box;" placeholder="e.g., Family History" />
+        <label for="timelineTitle" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">Timeline Title</label>
+        <input type="text" id="timelineTitle" required style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; color: #0f172a;" placeholder="e.g., Family History" />
       </div>
 
       <div style="display: flex; justify-content: flex-end; gap: 8px;">
@@ -150,16 +194,16 @@
 
 <!-- CSV Import Modal -->
 <div id="csvImportModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
-  <div style="background: #fff; padding: 24px; border-radius: 8px; width: 420px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
-    <h3 style="margin-top: 0;">Import Events from CSV</h3>
-    <p style="margin: 0 0 16px; color: #64748b; font-size: 14px; line-height: 1.5;">
-      Events will be added to the currently selected timeline. Expected columns: <strong>title</strong>, <strong>date</strong>, <strong>tier</strong>. A <strong>timeline</strong> column is optional and ignored.
+  <div style="background: #ffffff; color: #0f172a; padding: 24px; border-radius: 8px; width: 420px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
+    <h3 style="margin-top: 0; color: #0f172a;">Import Events from CSV</h3>
+                <p style="margin: 0 0 16px; color: #64748b; font-size: 14px; line-height: 1.5;">
+      Events will be added to the currently selected timeline. Expected columns: <strong>title</strong>, <strong>date</strong> (or <strong>start_date</strong>), <strong>end_date</strong> (optional), <strong>tier</strong>, <strong>tags</strong> (optional, comma-separated).
     </p>
 
     <form id="csvImportForm">
       <div style="margin-bottom: 16px;">
-        <label for="csvFileInput" style="display: block; font-weight: bold; margin-bottom: 4px;">CSV File</label>
-        <input type="file" id="csvFileInput" accept=".csv,text/csv" required style="width: 100%; box-sizing: border-box;" />
+        <label for="csvFileInput" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">CSV File</label>
+        <input type="file" id="csvFileInput" accept=".csv,text/csv" required style="width: 100%; box-sizing: border-box; color: #0f172a;" />
       </div>
 
       <p id="csvImportStatus" style="display: none; margin: 0 0 16px; font-size: 14px; line-height: 1.5;"></p>
@@ -174,8 +218,8 @@
 
 <!-- Delete Confirmation Modal -->
 <div id="deleteConfirmModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1001; align-items: center; justify-content: center;">
-  <div style="background: #fff; padding: 24px; border-radius: 8px; width: 360px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
-    <h3 style="margin-top: 0;">Delete Event</h3>
+  <div style="background: #ffffff; color: #0f172a; padding: 24px; border-radius: 8px; width: 360px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
+    <h3 style="margin-top: 0; color: #0f172a;">Delete Event</h3>
     <p id="deleteConfirmMessage" style="margin: 0 0 20px; color: #334155; line-height: 1.5;"></p>
     <div style="display: flex; justify-content: flex-end; gap: 8px;">
       <button type="button" id="deleteConfirmCancelBtn" style="padding: 8px 14px; cursor: pointer;">Cancel</button>
