@@ -91,14 +91,37 @@
 </head>
 <body>
 
-  <h2>D3 Timeline with Firebase</h2>
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+    <h2 style="margin: 0;">D3 Timeline with Firebase</h2>
+
+    <!-- User Auth Control Bar -->
+    <div id="authContainer" style="display: flex; align-items: center; gap: 10px;">
+      <span id="userInfo" style="font-size: 14px; color: #94a3b8; display: none;"></span>
+      <button id="openAuthBtn" style="padding: 6px 14px; background: #0284c7; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500;">
+        Sign In / Sign Up
+      </button>
+      <button id="signOutBtn" style="display: none; padding: 6px 14px; background: #475569; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500;">
+        Sign Out
+      </button>
+    </div>
+  </div>
   
-<div class="timeline-picker">
-  <label for="timelineSelect">Select Timeline: </label>
-  <select id="timelineSelect">
-    <option value="">Loading timelines...</option>
-  </select>
-</div>
+    <div class="timeline-picker" style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <label for="timelineSelect">Select Timeline: </label>
+      <select id="timelineSelect" style="padding: 6px 12px; border-radius: 4px; border: 1px solid #475569; background: #1e293b; color: #f8fafc;">
+        <option value="">Loading timelines...</option>
+      </select>
+    </div>
+
+    <!-- Timeline Visibility Toggle (Visible to owner) -->
+    <div id="timelineVisibilityContainer" style="display: none; align-items: center; gap: 8px;">
+      <label style="font-size: 14px; color: #94a3b8; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+        <input type="checkbox" id="timelinePublicCheckbox" style="cursor: pointer;" />
+        <span>Public Timeline (anyone can view)</span>
+      </label>
+    </div>
+  </div>
 
   <div id="timeline-container"></div>
 
@@ -225,6 +248,35 @@
       <button type="button" id="deleteConfirmCancelBtn" style="padding: 8px 14px; cursor: pointer;">Cancel</button>
       <button type="button" id="deleteConfirmOkBtn" style="padding: 8px 14px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Delete</button>
     </div>
+  </div>
+</div>
+
+<!-- Authentication Modal -->
+<div id="authModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+  <div style="background: #ffffff; color: #0f172a; padding: 24px; border-radius: 8px; width: 360px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+      <h3 id="authModalTitle" style="margin: 0; color: #0f172a;">Sign In</h3>
+      <button type="button" id="toggleAuthModeBtn" style="background: none; border: none; color: #0284c7; cursor: pointer; font-size: 13px; text-decoration: underline;">Need an account? Sign Up</button>
+    </div>
+
+    <form id="authForm">
+      <div style="margin-bottom: 12px;">
+        <label for="authEmail" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">Email Address</label>
+        <input type="email" id="authEmail" required style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; color: #0f172a;" placeholder="user@example.com" />
+      </div>
+
+      <div style="margin-bottom: 16px;">
+        <label for="authPassword" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">Password</label>
+        <input type="password" id="authPassword" required minlength="6" style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; color: #0f172a;" placeholder="••••••••" />
+      </div>
+
+      <p id="authErrorMsg" style="display: none; color: #dc3545; font-size: 13px; margin: 0 0 12px 0;"></p>
+
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <button type="button" id="cancelAuthBtn" style="padding: 8px 14px; cursor: pointer;">Cancel</button>
+        <button type="submit" id="authSubmitBtn" style="padding: 8px 14px; background: #0284c7; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500;">Sign In</button>
+      </div>
+    </form>
   </div>
 </div>
 

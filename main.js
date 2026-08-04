@@ -1,6 +1,12 @@
 import * as d3 from 'd3';
-import { db } from './firebase.js';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, writeBatch, Timestamp } from 'firebase/firestore';
+import { db, auth } from './firebase.js';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, writeBatch, Timestamp } from 'firebase/firestore';
+import { 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged 
+} from 'firebase/auth';
 
 const CREATE_TIMELINE_VALUE = "__create_new__";
 
@@ -15,8 +21,143 @@ function formatDateForInput(date) {
   return `${y}-${m}-${d}`;
 }
 
+function setupAuthModal(onAuthSuccess) {
+  const openAuthBtn = document.getElementById("openAuthBtn");
+  const signOutBtn = document.getElementById("signOutBtn");
+  const userInfoSpan = document.getElementById("userInfo");
+
+  const modal = document.getElementById("authModal");
+  const modalTitle = document.getElementById("authModalTitle");
+  const toggleModeBtn = document.getElementById("toggleAuthModeBtn");
+  const form = document.getElementById("authForm");
+  const emailInput = document.getElementById("authEmail");
+  const passwordInput = document.getElementById("authPassword");
+  const submitBtn = document.getElementById("authSubmitBtn");
+  const cancelBtn = document.getElementById("cancelAuthBtn");
+  const errorMsg = document.getElementById("authErrorMsg");
+
+  let isSignUpMode = false;
+
+  function closeModal() {
+    if (modal) modal.style.display = "none";
+    if (form) form.reset();
+    if (errorMsg) {
+      errorMsg.style.display = "none";
+      errorMsg.textContent = "";
+    }
+  }
+
+  function openModal(signUp = false) {
+    isSignUpMode = signUp;
+    updateModalMode();
+    if (form) form.reset();
+    if (errorMsg) {
+      errorMsg.style.display = "none";
+      errorMsg.textContent = "";
+    }
+    if (modal) modal.style.display = "flex";
+  }
+
+  function updateModalMode() {
+    if (isSignUpMode) {
+      modalTitle.textContent = "Sign Up";
+      submitBtn.textContent = "Create Account";
+      toggleModeBtn.textContent = "Already have an account? Sign In";
+    } else {
+      modalTitle.textContent = "Sign In";
+      submitBtn.textContent = "Sign In";
+      toggleModeBtn.textContent = "Need an account? Sign Up";
+    }
+  }
+
+  if (openAuthBtn) openAuthBtn.addEventListener("click", () => openModal(false));
+  if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+
+  if (toggleModeBtn) {
+    toggleModeBtn.addEventListener("click", () => {
+      isSignUpMode = !isSignUpMode;
+      updateModalMode();
+      if (errorMsg) {
+        errorMsg.style.display = "none";
+        errorMsg.textContent = "";
+      }
+    });
+  }
+
+  if (signOutBtn) {
+    signOutBtn.addEventListener("click", async () => {
+      try {
+        await signOut(auth);
+      } catch (err) {
+        console.error("Error signing out:", err);
+      }
+    });
+  }
+
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+
+      if (errorMsg) {
+        errorMsg.style.display = "none";
+        errorMsg.textContent = "";
+      }
+
+      submitBtn.disabled = true;
+
+      try {
+        if (isSignUpMode) {
+          await createUserWithEmailAndPassword(auth, email, password);
+        } else {
+          await signInWithEmailAndPassword(auth, email, password);
+        }
+        closeModal();
+      } catch (err) {
+        console.error("Auth error:", err);
+        let msg = err.message || "Authentication failed.";
+        if (err.code === "auth/user-not-found" || err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
+          msg = "Invalid email or password.";
+        } else if (err.code === "auth/email-already-in-use") {
+          msg = "An account with this email already exists.";
+        } else if (err.code === "auth/weak-password") {
+          msg = "Password should be at least 6 characters.";
+        }
+        if (errorMsg) {
+          errorMsg.textContent = msg;
+          errorMsg.style.display = "block";
+        }
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  }
+
+  // Listen for Firebase auth state updates
+  onAuthStateChanged(auth, (user) => {
+    if (user) {
+      if (openAuthBtn) openAuthBtn.style.display = "none";
+      if (signOutBtn) signOutBtn.style.display = "inline-block";
+      if (userInfoSpan) {
+        userInfoSpan.textContent = `Logged in as: ${user.email}`;
+        userInfoSpan.style.display = "inline-block";
+      }
+    } else {
+      if (openAuthBtn) openAuthBtn.style.display = "inline-block";
+      if (signOutBtn) signOutBtn.style.display = "none";
+      if (userInfoSpan) {
+        userInfoSpan.textContent = "";
+        userInfoSpan.style.display = "none";
+      }
+    }
+    if (onAuthSuccess) onAuthSuccess(user);
+  });
+}
+
 // Function to add a new event document to Firestore
 async function createEvent(timelineId, eventData) {
+  if (!auth.currentUser) throw new Error("Must be logged in to create an event.");
   try {
     const eventsRef = collection(db, "timelines", timelineId, "events");
     const docData = {
@@ -40,6 +181,7 @@ async function createEvent(timelineId, eventData) {
 }
 
 async function updateEvent(timelineId, eventId, eventData) {
+  if (!auth.currentUser) throw new Error("Must be logged in to update an event.");
   try {
     const eventRef = doc(db, "timelines", timelineId, "events", eventId);
     const docData = {
@@ -65,6 +207,7 @@ async function updateEvent(timelineId, eventId, eventData) {
 }
 
 async function deleteEvent(timelineId, eventId) {
+  if (!auth.currentUser) throw new Error("Must be logged in to delete an event.");
   try {
     const eventRef = doc(db, "timelines", timelineId, "events", eventId);
     await deleteDoc(eventRef);
@@ -227,6 +370,9 @@ function setupEventModal(getCurrentTimelineId, onEventsChanged) {
 }
 
 async function createTimeline(title) {
+  const currentUser = auth.currentUser;
+  if (!currentUser) throw new Error("Must be logged in to create a timeline.");
+
   const cleanTitle = title.trim();
   const timelineId = slugify(cleanTitle);
   if (!timelineId) throw new Error("Invalid timeline title");
@@ -234,6 +380,8 @@ async function createTimeline(title) {
   const timelineRef = doc(db, "timelines", timelineId);
   await setDoc(timelineRef, {
     title: cleanTitle,
+    ownerEmail: currentUser.email,
+    isPublic: false,
     createdAt: Timestamp.now()
   }, { merge: true });
 
@@ -286,7 +434,33 @@ function setupTimelineModal(onTimelineCreated) {
   return { open };
 }
 
-// Fetch events for a specific timeline ID
+// Helper to update controls (add event, import CSV, public checkbox) based on current user ownership
+function updateUIForTimelineOwner(timelineId) {
+  const currentUser = auth.currentUser;
+  const userEmail = currentUser ? currentUser.email : null;
+  const meta = timelineMetaMap.get(timelineId);
+
+  const isOwner = Boolean(currentUser && meta && meta.ownerEmail === userEmail);
+
+  // Toggle buttons for adding events / CSV import
+  const openAddEventBtn = document.getElementById("openAddEventBtn");
+  const openImportCsvBtn = document.getElementById("openImportCsvBtn");
+  if (openAddEventBtn) openAddEventBtn.style.display = isOwner ? "inline-block" : "none";
+  if (openImportCsvBtn) openImportCsvBtn.style.display = isOwner ? "inline-block" : "none";
+
+  // Timeline public checkbox control
+  const visibilityContainer = document.getElementById("timelineVisibilityContainer");
+  const publicCheckbox = document.getElementById("timelinePublicCheckbox");
+
+  if (visibilityContainer && publicCheckbox) {
+    if (isOwner && meta) {
+      visibilityContainer.style.display = "flex";
+      publicCheckbox.checked = meta.isPublic === true;
+    } else {
+      visibilityContainer.style.display = "none";
+    }
+  }
+}
 async function loadEvents(timelineId = "personal-timeline") {
   try {
     const eventsRef = collection(db, "timelines", timelineId, "events");
@@ -329,40 +503,80 @@ async function loadEvents(timelineId = "personal-timeline") {
   }
 }
 
-// Fetch all timeline documents from Firestore and populate the dropdown
+// Map of loaded timeline metadata by timelineId
+let timelineMetaMap = new Map();
+
+// Fetch all timeline documents from Firestore and populate the dropdown based on user permissions
 async function loadTimelineOptions(selectedId = null) {
   const selectEl = document.getElementById("timelineSelect");
   if (!selectEl) return null;
+
+  const currentUser = auth.currentUser;
+  const userEmail = currentUser ? currentUser.email : null;
 
   try {
     const timelinesSnapshot = await getDocs(collection(db, "timelines"));
 
     selectEl.innerHTML = "";
+    timelineMetaMap.clear();
 
     let firstTimelineId = null;
 
     timelinesSnapshot.forEach((docSnap) => {
       const data = docSnap.data();
-      const option = document.createElement("option");
+      const ownerEmail = data.ownerEmail || null;
+      const isPublic = data.isPublic === true;
 
-      option.value = docSnap.id;
-      option.textContent = data.title || docSnap.id;
+      timelineMetaMap.set(docSnap.id, {
+        id: docSnap.id,
+        title: data.title || docSnap.id,
+        ownerEmail: ownerEmail,
+        isPublic: isPublic
+      });
 
-      selectEl.appendChild(option);
+      // Filter timelines: show if public OR if owned by current logged in user
+      const canView = isPublic || (userEmail && ownerEmail === userEmail);
 
-      if (!firstTimelineId) {
-        firstTimelineId = docSnap.id;
+      if (canView) {
+        const option = document.createElement("option");
+        option.value = docSnap.id;
+        option.textContent = data.title || docSnap.id;
+        selectEl.appendChild(option);
+
+        if (!firstTimelineId) {
+          firstTimelineId = docSnap.id;
+        }
       }
     });
 
-    const createOption = document.createElement("option");
-    createOption.value = CREATE_TIMELINE_VALUE;
-    createOption.textContent = "+ Create New Timeline...";
-    selectEl.appendChild(createOption);
+    // Option to create new timeline (only if user is logged in)
+    if (currentUser) {
+      const createOption = document.createElement("option");
+      createOption.value = CREATE_TIMELINE_VALUE;
+      createOption.textContent = "+ Create New Timeline...";
+      selectEl.appendChild(createOption);
+    }
 
-    const idToSelect = selectedId && selectedId !== CREATE_TIMELINE_VALUE
-      ? selectedId
-      : firstTimelineId;
+    if (selectEl.options.length === 0) {
+      const emptyOption = document.createElement("option");
+      emptyOption.value = "";
+      emptyOption.textContent = "No timelines available";
+      selectEl.appendChild(emptyOption);
+      return null;
+    }
+
+    let idToSelect = null;
+    if (selectedId && selectedId !== CREATE_TIMELINE_VALUE) {
+      // Verify if user can access the selectedId
+      const meta = timelineMetaMap.get(selectedId);
+      if (meta && (meta.isPublic || (userEmail && meta.ownerEmail === userEmail))) {
+        idToSelect = selectedId;
+      }
+    }
+
+    if (!idToSelect) {
+      idToSelect = firstTimelineId;
+    }
 
     if (idToSelect) {
       selectEl.value = idToSelect;
@@ -715,14 +929,40 @@ function resolveStrictCollisions(visibleEvents, scale) {
 }
 
 async function init() {
-  let activeTimelineId = await loadTimelineOptions();
-  let previousTimelineId = activeTimelineId;
-  let eventsData = activeTimelineId ? await loadEvents(activeTimelineId) : [];
+  let activeTimelineId = null;
+  let previousTimelineId = null;
+  let eventsData = [];
   let currentTransform = d3.zoomIdentity;
   let selectedTags = new Set();
 
   const keywordInput = document.getElementById("keywordFilterInput");
   const tagFilterContainer = document.getElementById("tagFilterContainer");
+  const publicCheckbox = document.getElementById("timelinePublicCheckbox");
+
+  if (publicCheckbox) {
+    publicCheckbox.addEventListener("change", async (e) => {
+      if (!activeTimelineId || !auth.currentUser) return;
+      const isChecked = e.target.checked;
+      try {
+        const timelineRef = doc(db, "timelines", activeTimelineId);
+        await updateDoc(timelineRef, { isPublic: isChecked });
+        const meta = timelineMetaMap.get(activeTimelineId);
+        if (meta) meta.isPublic = isChecked;
+      } catch (err) {
+        console.error("Error updating timeline public status:", err);
+        alert("Failed to update timeline visibility.");
+        e.target.checked = !isChecked;
+      }
+    });
+  }
+
+  setupAuthModal(async (user) => {
+    activeTimelineId = await loadTimelineOptions(activeTimelineId);
+    previousTimelineId = activeTimelineId;
+    updateUIForTimelineOwner(activeTimelineId);
+    eventsData = activeTimelineId ? await loadEvents(activeTimelineId) : [];
+    refreshChart(eventsData);
+  });
 
   function renderTagBadges() {
     if (!tagFilterContainer) return;
@@ -831,15 +1071,16 @@ async function init() {
 
   const selectEl = document.getElementById("timelineSelect");
 
-  const timelineModal = setupTimelineModal(async (newTimelineId) => {
+    const timelineModal = setupTimelineModal(async (newTimelineId) => {
     activeTimelineId = newTimelineId;
     previousTimelineId = newTimelineId;
     await loadTimelineOptions(newTimelineId);
+    updateUIForTimelineOwner(activeTimelineId);
     eventsData = [];
     refreshChart(eventsData);
   });
 
-  if (selectEl) {
+    if (selectEl) {
     selectEl.addEventListener("change", async (e) => {
       const selected = e.target.value;
 
@@ -850,7 +1091,8 @@ async function init() {
 
       previousTimelineId = selected;
       activeTimelineId = selected;
-      eventsData = await loadEvents(activeTimelineId);
+      updateUIForTimelineOwner(activeTimelineId);
+      eventsData = activeTimelineId ? await loadEvents(activeTimelineId) : [];
       refreshChart(eventsData);
     });
   }
@@ -947,12 +1189,21 @@ function updateTimeline(scale, zoomFactor, eventsData) {
     .attr("class", d => `event-node event-tier-${d.tier}`)
     .attr("transform", d => `translate(${d.targetX}, ${d.y})`);
 
-  const handleEventClick = (event, d) => {
+    const handleEventClick = (event, d) => {
     event.stopPropagation();
-    if (openEditEventModal) openEditEventModal(d);
+    const currentUser = auth.currentUser;
+    const userEmail = currentUser ? currentUser.email : null;
+    const selectEl = document.getElementById("timelineSelect");
+    const currentTimelineId = selectEl ? selectEl.value : null;
+    const meta = currentTimelineId ? timelineMetaMap.get(currentTimelineId) : null;
+    const isOwner = Boolean(currentUser && meta && meta.ownerEmail === userEmail);
+
+    if (isOwner && openEditEventModal) {
+      openEditEventModal(d);
+    }
   };
 
-  allNodes.select("circle")
+    allNodes.select("circle")
     .style("cursor", "pointer")
     .on("click", handleEventClick);
 
