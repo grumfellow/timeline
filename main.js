@@ -389,29 +389,73 @@ async function createTimeline(title) {
   return timelineId;
 }
 
-function setupTimelineModal(onTimelineCreated) {
+async function renameTimeline(timelineId, newTitle) {
+  const currentUser = auth.currentUser;
+  if (!currentUser) throw new Error("Must be logged in to rename a timeline.");
+
+  const meta = timelineMetaMap.get(timelineId);
+  if (!meta || meta.ownerEmail !== currentUser.email) {
+    throw new Error("Only the owner can rename this timeline.");
+  }
+
+  const cleanTitle = newTitle.trim();
+  if (!cleanTitle) throw new Error("Invalid timeline title");
+
+  const timelineRef = doc(db, "timelines", timelineId);
+  await updateDoc(timelineRef, {
+    title: cleanTitle,
+    updatedAt: Timestamp.now()
+  });
+
+  if (meta) meta.title = cleanTitle;
+  console.log(`Successfully renamed timeline '${timelineId}' to '${cleanTitle}'`);
+}
+
+function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
   const modal = document.getElementById("timelineModal");
+  const modalTitle = document.getElementById("timelineModalTitle");
   const form = document.getElementById("timelineForm");
   const cancelBtn = document.getElementById("cancelTimelineBtn");
+  const submitBtn = document.getElementById("createTimelineBtn");
+  const titleInput = document.getElementById("timelineTitle");
 
   if (!modal || !form) return null;
 
   let restoreTimelineId = null;
+  let renamingTimelineId = null;
 
   function close(restoreSelection = true) {
     modal.style.display = "none";
     form.reset();
+    renamingTimelineId = null;
+    if (modalTitle) modalTitle.textContent = "Create New Timeline";
+    if (submitBtn) submitBtn.textContent = "Save";
+
     if (restoreSelection && restoreTimelineId) {
       const selectEl = document.getElementById("timelineSelect");
       if (selectEl) selectEl.value = restoreTimelineId;
     }
   }
 
-  function open(previousTimelineId) {
+  function openCreate(previousTimelineId) {
+    renamingTimelineId = null;
     restoreTimelineId = previousTimelineId || null;
     form.reset();
+    if (modalTitle) modalTitle.textContent = "Create New Timeline";
+    if (submitBtn) submitBtn.textContent = "Create";
     modal.style.display = "flex";
-    document.getElementById("timelineTitle")?.focus();
+    titleInput?.focus();
+  }
+
+  function openRename(timelineId, currentTitle) {
+    renamingTimelineId = timelineId;
+    restoreTimelineId = timelineId;
+    form.reset();
+    if (titleInput) titleInput.value = currentTitle || "";
+    if (modalTitle) modalTitle.textContent = "Rename Timeline";
+    if (submitBtn) submitBtn.textContent = "Rename";
+    modal.style.display = "flex";
+    titleInput?.focus();
   }
 
   if (cancelBtn) cancelBtn.addEventListener("click", () => close(true));
@@ -419,22 +463,29 @@ function setupTimelineModal(onTimelineCreated) {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
 
-    const titleInput = document.getElementById("timelineTitle").value.trim();
-    if (!titleInput) return;
+    const val = titleInput.value.trim();
+    if (!val) return;
 
     try {
-      const newTimelineId = await createTimeline(titleInput);
-      close(false);
-      onTimelineCreated(newTimelineId);
+      if (renamingTimelineId) {
+        await renameTimeline(renamingTimelineId, val);
+        const targetId = renamingTimelineId;
+        close(false);
+        if (onTimelineRenamed) onTimelineRenamed(targetId);
+      } else {
+        const newTimelineId = await createTimeline(val);
+        close(false);
+        if (onTimelineCreated) onTimelineCreated(newTimelineId);
+      }
     } catch (err) {
-      alert("Failed to create timeline. Check console for details.");
+      alert(`Failed to ${renamingTimelineId ? "rename" : "create"} timeline. Check console for details.`);
     }
   });
 
-  return { open };
+  return { openCreate, openRename };
 }
 
-// Helper to update controls (add event, import CSV, public checkbox) based on current user ownership
+// Helper to update controls (add event, import CSV, rename, public checkbox) based on current user ownership
 function updateUIForTimelineOwner(timelineId) {
   const currentUser = auth.currentUser;
   const userEmail = currentUser ? currentUser.email : null;
@@ -442,11 +493,14 @@ function updateUIForTimelineOwner(timelineId) {
 
   const isOwner = Boolean(currentUser && meta && meta.ownerEmail === userEmail);
 
-  // Toggle buttons for adding events / CSV import
+  // Toggle buttons for adding events / CSV import / rename
   const openAddEventBtn = document.getElementById("openAddEventBtn");
   const openImportCsvBtn = document.getElementById("openImportCsvBtn");
+  const renameTimelineBtn = document.getElementById("renameTimelineBtn");
+
   if (openAddEventBtn) openAddEventBtn.style.display = isOwner ? "inline-block" : "none";
   if (openImportCsvBtn) openImportCsvBtn.style.display = isOwner ? "inline-block" : "none";
+  if (renameTimelineBtn) renameTimelineBtn.style.display = isOwner ? "inline-block" : "none";
 
   // Timeline public checkbox control
   const visibilityContainer = document.getElementById("timelineVisibilityContainer");
@@ -1069,23 +1123,40 @@ async function init() {
   svg.call(zoom);
   refreshChart(eventsData);
 
-  const selectEl = document.getElementById("timelineSelect");
+    const selectEl = document.getElementById("timelineSelect");
+  const renameTimelineBtn = document.getElementById("renameTimelineBtn");
 
-    const timelineModal = setupTimelineModal(async (newTimelineId) => {
-    activeTimelineId = newTimelineId;
-    previousTimelineId = newTimelineId;
-    await loadTimelineOptions(newTimelineId);
-    updateUIForTimelineOwner(activeTimelineId);
-    eventsData = [];
-    refreshChart(eventsData);
-  });
+  const timelineModal = setupTimelineModal(
+    async (newTimelineId) => {
+      activeTimelineId = newTimelineId;
+      previousTimelineId = newTimelineId;
+      await loadTimelineOptions(newTimelineId);
+      updateUIForTimelineOwner(activeTimelineId);
+      eventsData = [];
+      refreshChart(eventsData);
+    },
+    async (renamedTimelineId) => {
+      await loadTimelineOptions(renamedTimelineId);
+      updateUIForTimelineOwner(renamedTimelineId);
+    }
+  );
 
-    if (selectEl) {
+  if (renameTimelineBtn) {
+    renameTimelineBtn.addEventListener("click", () => {
+      if (!activeTimelineId) return;
+      const meta = timelineMetaMap.get(activeTimelineId);
+      if (timelineModal && meta) {
+        timelineModal.openRename(activeTimelineId, meta.title);
+      }
+    });
+  }
+
+  if (selectEl) {
     selectEl.addEventListener("change", async (e) => {
       const selected = e.target.value;
 
       if (selected === CREATE_TIMELINE_VALUE) {
-        if (timelineModal) timelineModal.open(previousTimelineId);
+        if (timelineModal) timelineModal.openCreate(previousTimelineId);
         return;
       }
 
