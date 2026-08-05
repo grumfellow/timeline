@@ -883,8 +883,8 @@ function setupCsvImport(getCurrentTimelineId, onImportComplete) {
 }
 
 const container = document.getElementById("timeline-container");
-const width = container.clientWidth;
-const height = container.clientHeight;
+let width = container.clientWidth;
+let height = container.clientHeight;
 const margin = { top: 40, right: 40, bottom: 60, left: 40 };
 
 const svg = d3.select("#timeline-container")
@@ -892,7 +892,7 @@ const svg = d3.select("#timeline-container")
   .attr("width", width)
   .attr("height", height);
 
-const axisY = height - margin.bottom;
+let axisY = height - margin.bottom;
 
 const canvas = document.createElement("canvas");
 const ctx = canvas.getContext("2d");
@@ -1179,6 +1179,20 @@ async function init() {
   if (eventModal) {
     openEditEventModal = eventModal.openEdit;
   }
+
+    window.addEventListener("resize", () => {
+    width = container.clientWidth;
+    height = container.clientHeight;
+    axisY = height - margin.bottom;
+
+    svg.attr("width", width).attr("height", height);
+    xBaseScale.range([margin.left, width - margin.right]);
+    gAxis.attr("transform", `translate(0, ${axisY})`);
+    zoom.extent([[margin.left, 0], [width - margin.right, height]])
+        .translateExtent([[margin.left, -Infinity], [width - margin.right, Infinity]]);
+
+    renderCurrentTimeline();
+  });
 
   setupCsvImport(
     () => activeTimelineId,
