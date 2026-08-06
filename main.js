@@ -10,6 +10,16 @@ import {
 
 const CREATE_TIMELINE_VALUE = "__create_new__";
 
+const DEFAULT_TIMELINE_SETTINGS = {
+  backgroundColor: "#1e293b",
+  fontColor: "#e2e8f0",
+  tierColors: {
+    1: "#ef4444",
+    2: "#3b82f6",
+    3: "#10b981"
+  }
+};
+
 function slugify(text) {
   return text.toLowerCase().trim().replace(/[^\w\s-]/g, "").replace(/[\s_-]+/g, "-");
 }
@@ -369,7 +379,7 @@ function setupEventModal(getCurrentTimelineId, onEventsChanged) {
   return { openAdd, openEdit };
 }
 
-async function createTimeline(title) {
+async function createTimeline(title, settings = {}) {
   const currentUser = auth.currentUser;
   if (!currentUser) throw new Error("Must be logged in to create a timeline.");
 
@@ -381,34 +391,64 @@ async function createTimeline(title) {
   await setDoc(timelineRef, {
     title: cleanTitle,
     ownerEmail: currentUser.email,
-    isPublic: false,
-    createdAt: Timestamp.now()
+    isPublic: settings.isPublic === true,
+    createdAt: Timestamp.now(),
+    settings: {
+      backgroundColor: settings.backgroundColor || DEFAULT_TIMELINE_SETTINGS.backgroundColor,
+      fontColor: settings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor,
+      tierColors: {
+        1: (settings.tierColors?.[1] || DEFAULT_TIMELINE_SETTINGS.tierColors[1]),
+        2: (settings.tierColors?.[2] || DEFAULT_TIMELINE_SETTINGS.tierColors[2]),
+        3: (settings.tierColors?.[3] || DEFAULT_TIMELINE_SETTINGS.tierColors[3])
+      }
+    }
   }, { merge: true });
 
   console.log(`Successfully created timeline '${cleanTitle}' with ID: ${timelineId}`);
   return timelineId;
 }
 
-async function renameTimeline(timelineId, newTitle) {
+async function updateTimelineSettings(timelineId, updates) {
   const currentUser = auth.currentUser;
-  if (!currentUser) throw new Error("Must be logged in to rename a timeline.");
+  if (!currentUser) throw new Error("Must be logged in to update timeline settings.");
 
   const meta = timelineMetaMap.get(timelineId);
   if (!meta || meta.ownerEmail !== currentUser.email) {
-    throw new Error("Only the owner can rename this timeline.");
+    throw new Error("Only the owner can update this timeline.");
   }
 
-  const cleanTitle = newTitle.trim();
-  if (!cleanTitle) throw new Error("Invalid timeline title");
+  const payload = { updatedAt: Timestamp.now() };
+
+  if (typeof updates.title === "string") {
+    const cleanTitle = updates.title.trim();
+    if (!cleanTitle) throw new Error("Invalid timeline title");
+    payload.title = cleanTitle;
+  }
+
+  if (typeof updates.isPublic === "boolean") {
+    payload.isPublic = updates.isPublic;
+  }
+
+  if (updates.settings) {
+    payload.settings = {
+      backgroundColor: updates.settings.backgroundColor || meta.settings?.backgroundColor || DEFAULT_TIMELINE_SETTINGS.backgroundColor,
+      fontColor: updates.settings.fontColor || meta.settings?.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor,
+      tierColors: {
+        1: updates.settings.tierColors?.[1] || meta.settings?.tierColors?.[1] || DEFAULT_TIMELINE_SETTINGS.tierColors[1],
+        2: updates.settings.tierColors?.[2] || meta.settings?.tierColors?.[2] || DEFAULT_TIMELINE_SETTINGS.tierColors[2],
+        3: updates.settings.tierColors?.[3] || meta.settings?.tierColors?.[3] || DEFAULT_TIMELINE_SETTINGS.tierColors[3]
+      }
+    };
+  }
 
   const timelineRef = doc(db, "timelines", timelineId);
-  await updateDoc(timelineRef, {
-    title: cleanTitle,
-    updatedAt: Timestamp.now()
-  });
+  await updateDoc(timelineRef, payload);
 
-  if (meta) meta.title = cleanTitle;
-  console.log(`Successfully renamed timeline '${timelineId}' to '${cleanTitle}'`);
+  if (meta) {
+    if (payload.title) meta.title = payload.title;
+    if (payload.isPublic !== undefined) meta.isPublic = payload.isPublic;
+    if (payload.settings) meta.settings = payload.settings;
+  }
 }
 
 function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
@@ -437,10 +477,27 @@ function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
     }
   }
 
+  const publicInput = document.getElementById("timelinePublicInput");
+  const backgroundInput = document.getElementById("timelineBackgroundColor");
+  const fontColorInput = document.getElementById("timelineFontColor");
+  const tier1Input = document.getElementById("tier1Color");
+  const tier2Input = document.getElementById("tier2Color");
+  const tier3Input = document.getElementById("tier3Color");
+
+  function setTimelineInputs(settings = DEFAULT_TIMELINE_SETTINGS, isPublic = false, title = "") {
+    if (titleInput) titleInput.value = title;
+    if (publicInput) publicInput.checked = isPublic;
+    if (backgroundInput) backgroundInput.value = settings.backgroundColor || DEFAULT_TIMELINE_SETTINGS.backgroundColor;
+    if (fontColorInput) fontColorInput.value = settings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor;
+    if (tier1Input) tier1Input.value = settings.tierColors?.[1] || DEFAULT_TIMELINE_SETTINGS.tierColors[1];
+    if (tier2Input) tier2Input.value = settings.tierColors?.[2] || DEFAULT_TIMELINE_SETTINGS.tierColors[2];
+    if (tier3Input) tier3Input.value = settings.tierColors?.[3] || DEFAULT_TIMELINE_SETTINGS.tierColors[3];
+  }
+
   function openCreate(previousTimelineId) {
     renamingTimelineId = null;
     restoreTimelineId = previousTimelineId || null;
-    form.reset();
+    setTimelineInputs(DEFAULT_TIMELINE_SETTINGS, false, "");
     if (modalTitle) modalTitle.textContent = "Create New Timeline";
     if (submitBtn) submitBtn.textContent = "Create";
     modal.style.display = "flex";
@@ -450,10 +507,12 @@ function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
   function openRename(timelineId, currentTitle) {
     renamingTimelineId = timelineId;
     restoreTimelineId = timelineId;
-    form.reset();
-    if (titleInput) titleInput.value = currentTitle || "";
-    if (modalTitle) modalTitle.textContent = "Rename Timeline";
-    if (submitBtn) submitBtn.textContent = "Rename";
+    const meta = timelineMetaMap.get(timelineId);
+    const settings = meta?.settings || DEFAULT_TIMELINE_SETTINGS;
+    const isPublic = meta?.isPublic === true;
+    setTimelineInputs(settings, isPublic, currentTitle || "");
+    if (modalTitle) modalTitle.textContent = "Edit Timeline";
+    if (submitBtn) submitBtn.textContent = "Save";
     modal.style.display = "flex";
     titleInput?.focus();
   }
@@ -466,19 +525,35 @@ function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
     const val = titleInput.value.trim();
     if (!val) return;
 
+    const settings = {
+      backgroundColor: backgroundInput?.value || DEFAULT_TIMELINE_SETTINGS.backgroundColor,
+      fontColor: fontColorInput?.value || DEFAULT_TIMELINE_SETTINGS.fontColor,
+      tierColors: {
+        1: tier1Input?.value || DEFAULT_TIMELINE_SETTINGS.tierColors[1],
+        2: tier2Input?.value || DEFAULT_TIMELINE_SETTINGS.tierColors[2],
+        3: tier3Input?.value || DEFAULT_TIMELINE_SETTINGS.tierColors[3]
+      }
+    };
+
+    const timelineData = {
+      title: val,
+      isPublic: publicInput?.checked === true,
+      settings
+    };
+
     try {
       if (renamingTimelineId) {
-        await renameTimeline(renamingTimelineId, val);
+        await updateTimelineSettings(renamingTimelineId, timelineData);
         const targetId = renamingTimelineId;
         close(false);
         if (onTimelineRenamed) onTimelineRenamed(targetId);
       } else {
-        const newTimelineId = await createTimeline(val);
+        const newTimelineId = await createTimeline(val, timelineData);
         close(false);
         if (onTimelineCreated) onTimelineCreated(newTimelineId);
       }
     } catch (err) {
-      alert(`Failed to ${renamingTimelineId ? "rename" : "create"} timeline. Check console for details.`);
+      alert(`Failed to ${renamingTimelineId ? "save" : "create"} timeline. Check console for details.`);
     }
   });
 
@@ -559,6 +634,7 @@ async function loadEvents(timelineId = "personal-timeline") {
 
 // Map of loaded timeline metadata by timelineId
 let timelineMetaMap = new Map();
+let currentTimelineSettings = { ...DEFAULT_TIMELINE_SETTINGS };
 
 // Fetch all timeline documents from Firestore and populate the dropdown based on user permissions
 async function loadTimelineOptions(selectedId = null) {
@@ -580,12 +656,23 @@ async function loadTimelineOptions(selectedId = null) {
       const data = docSnap.data();
       const ownerEmail = data.ownerEmail || null;
       const isPublic = data.isPublic === true;
+      const savedSettings = data.settings || {};
+      const tierColors = {
+        1: savedSettings.tierColors?.[1] || DEFAULT_TIMELINE_SETTINGS.tierColors[1],
+        2: savedSettings.tierColors?.[2] || DEFAULT_TIMELINE_SETTINGS.tierColors[2],
+        3: savedSettings.tierColors?.[3] || DEFAULT_TIMELINE_SETTINGS.tierColors[3]
+      };
 
       timelineMetaMap.set(docSnap.id, {
         id: docSnap.id,
         title: data.title || docSnap.id,
         ownerEmail: ownerEmail,
-        isPublic: isPublic
+        isPublic: isPublic,
+        settings: {
+          backgroundColor: savedSettings.backgroundColor || DEFAULT_TIMELINE_SETTINGS.backgroundColor,
+          fontColor: savedSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor,
+          tierColors
+        }
       });
 
       // Filter timelines: show if public OR if owned by current logged in user
@@ -1014,9 +1101,27 @@ async function init() {
     activeTimelineId = await loadTimelineOptions(activeTimelineId);
     previousTimelineId = activeTimelineId;
     updateUIForTimelineOwner(activeTimelineId);
+    applyTimelineStyles(timelineMetaMap.get(activeTimelineId));
     eventsData = activeTimelineId ? await loadEvents(activeTimelineId) : [];
     refreshChart(eventsData);
   });
+
+  function applyTimelineStyles(meta) {
+    const settings = meta?.settings || DEFAULT_TIMELINE_SETTINGS;
+    currentTimelineSettings = {
+      ...DEFAULT_TIMELINE_SETTINGS,
+      ...settings,
+      tierColors: {
+        ...DEFAULT_TIMELINE_SETTINGS.tierColors,
+        ...(settings.tierColors || {})
+      }
+    };
+
+    const containerEl = document.getElementById("timeline-container");
+    const titleEl = document.querySelector("h2");
+    if (containerEl) containerEl.style.background = currentTimelineSettings.backgroundColor;
+    if (titleEl) titleEl.style.color = currentTimelineSettings.fontColor;
+  }
 
   function renderTagBadges() {
     if (!tagFilterContainer) return;
@@ -1087,6 +1192,7 @@ async function init() {
   function refreshChart(data) {
     selectedTags.clear();
     renderTagBadges();
+    applyTimelineStyles(timelineMetaMap.get(activeTimelineId));
 
     const extent = d3.extent(data, d => d.date);
     if (extent[0] && extent[1]) {
@@ -1163,6 +1269,7 @@ async function init() {
       previousTimelineId = selected;
       activeTimelineId = selected;
       updateUIForTimelineOwner(activeTimelineId);
+      applyTimelineStyles(timelineMetaMap.get(activeTimelineId));
       eventsData = activeTimelineId ? await loadEvents(activeTimelineId) : [];
       refreshChart(eventsData);
     });
@@ -1211,6 +1318,8 @@ function updateTimeline(scale, zoomFactor, eventsData) {
 // Apply the multi-scale formatter directly
   xAxis.ticks(maxTicks).tickFormat(multiScaleFormat);
   gAxis.call(xAxis.scale(scale));
+  gAxis.selectAll("text").attr("fill", currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor);
+  gAxis.selectAll("path, line").attr("stroke", currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor);
 
   let maxVisibleTier = 1;
   if (zoomFactor >= 10) maxVisibleTier = 3;
@@ -1257,18 +1366,22 @@ function updateTimeline(scale, zoomFactor, eventsData) {
 
   // Toggle circle vs range-line visibility based on whether event has a range
   allNodes.select("circle")
-    .style("display", d => d.isRange ? "none" : "block");
+    .style("display", d => d.isRange ? "none" : "block")
+    .attr("fill", d => currentTimelineSettings.tierColors[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier])
+    .attr("stroke", d => currentTimelineSettings.tierColors[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]);
 
   allNodes.select("line.range-line")
     .style("display", d => d.isRange ? "block" : "none")
     .attr("x1", d => d.startX - d.targetX)
     .attr("y1", 0)
     .attr("x2", d => d.endX - d.targetX)
-    .attr("y2", 0);
+    .attr("y2", 0)
+    .attr("stroke", d => currentTimelineSettings.tierColors[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]);
 
   allNodes.select("text")
     .text(d => d.title)
-    .attr("x", d => d.isRange ? (d.endX - d.targetX) + 8 : 8);
+    .attr("x", d => d.isRange ? (d.endX - d.targetX) + 8 : 8)
+    .style("fill", currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor);
 
   allNodes
     .attr("class", d => `event-node event-tier-${d.tier}`)
