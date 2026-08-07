@@ -1238,12 +1238,18 @@ async function init() {
       previousTimelineId = newTimelineId;
       await loadTimelineOptions(newTimelineId);
       updateUIForTimelineOwner(activeTimelineId);
+      // apply styles for the newly created timeline and refresh view
+      applyTimelineStyles(timelineMetaMap.get(activeTimelineId));
       eventsData = [];
       refreshChart(eventsData);
     },
     async (renamedTimelineId) => {
       await loadTimelineOptions(renamedTimelineId);
       updateUIForTimelineOwner(renamedTimelineId);
+      // Immediately apply updated settings and refresh events
+      applyTimelineStyles(timelineMetaMap.get(renamedTimelineId));
+      eventsData = renamedTimelineId ? await loadEvents(renamedTimelineId) : [];
+      refreshChart(eventsData);
     }
   );
 
