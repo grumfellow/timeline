@@ -1123,17 +1123,17 @@ async function init() {
     if (titleEl) titleEl.style.color = currentTimelineSettings.fontColor;
     // Update axis colors immediately
     try {
-      gAxis.selectAll("text").attr("fill", currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor);
-      gAxis.selectAll("path, line").attr("stroke", currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor);
+      gAxis.selectAll("text").style("fill", currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor);
+      gAxis.selectAll("path, line").style("stroke", currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor);
 
       // Update existing event nodes (circles, range lines, and labels)
       if (gEvents) {
         gEvents.selectAll('.event-node').select('circle')
-          .attr('fill', d => (currentTimelineSettings.tierColors?.[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]))
-          .attr('stroke', d => (currentTimelineSettings.tierColors?.[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]));
+          .style('fill', d => (currentTimelineSettings.tierColors?.[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]))
+          .style('stroke', d => (currentTimelineSettings.tierColors?.[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]));
 
         gEvents.selectAll('.event-node').select('line.range-line')
-          .attr('stroke', d => (currentTimelineSettings.tierColors?.[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]));
+          .style('stroke', d => (currentTimelineSettings.tierColors?.[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]));
 
         gEvents.selectAll('.event-node').select('text')
           .style('fill', currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor);
@@ -1394,8 +1394,8 @@ function updateTimeline(scale, zoomFactor, eventsData) {
   // Toggle circle vs range-line visibility based on whether event has a range
   allNodes.select("circle")
     .style("display", d => d.isRange ? "none" : "block")
-    .attr("fill", d => currentTimelineSettings.tierColors[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier])
-    .attr("stroke", d => currentTimelineSettings.tierColors[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]);
+    .style("fill", d => currentTimelineSettings.tierColors[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier])
+    .style("stroke", d => currentTimelineSettings.tierColors[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]);
 
   allNodes.select("line.range-line")
     .style("display", d => d.isRange ? "block" : "none")
@@ -1403,7 +1403,7 @@ function updateTimeline(scale, zoomFactor, eventsData) {
     .attr("y1", 0)
     .attr("x2", d => d.endX - d.targetX)
     .attr("y2", 0)
-    .attr("stroke", d => currentTimelineSettings.tierColors[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]);
+    .style("stroke", d => currentTimelineSettings.tierColors[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]);
 
   allNodes.select("text")
     .text(d => d.title)
