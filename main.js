@@ -609,40 +609,45 @@ function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
     };
 
     try {
-      if (renamingTimelineId) {
-        // If a new file was selected, upload it first
-        if (selectedBgFile) {
-          const uploadedUrl = await uploadBackgroundImage(selectedBgFile, renamingTimelineId);
+      submitBtn.disabled = true;
+
+      // If a file was selected, upload it first so we can include URL in the initial settings
+      if (selectedBgFile) {
+        try {
+          const uploadTargetId = renamingTimelineId || slugify(val);
+          const uploadedUrl = await uploadBackgroundImage(selectedBgFile, uploadTargetId);
           timelineData.settings.backgroundImageUrl = uploadedUrl;
           timelineData.settings.backgroundImageMode = bgModeSelect?.value || 'stretch';
-        } else if (existingBgUrl === null) {
-          // removed image
-          timelineData.settings.backgroundImageUrl = null;
-          timelineData.settings.backgroundImageMode = null;
-        } else {
-          // keep existing
-          timelineData.settings.backgroundImageUrl = existingBgUrl || undefined;
-          timelineData.settings.backgroundImageMode = bgModeSelect?.value || 'stretch';
+        } catch (uploadErr) {
+          console.error('Background upload failed:', uploadErr);
+          alert('Failed to upload background image. Please try again.');
+          submitBtn.disabled = false;
+          return;
         }
+      } else if (existingBgUrl === null) {
+        // explicitly removed image
+        timelineData.settings.backgroundImageUrl = null;
+        timelineData.settings.backgroundImageMode = null;
+      } else if (existingBgUrl) {
+        timelineData.settings.backgroundImageUrl = existingBgUrl;
+        timelineData.settings.backgroundImageMode = bgModeSelect?.value || 'stretch';
+      }
 
+      if (renamingTimelineId) {
         await updateTimelineSettings(renamingTimelineId, timelineData);
         const targetId = renamingTimelineId;
         close(false);
         if (onTimelineRenamed) onTimelineRenamed(targetId);
       } else {
         const newTimelineId = await createTimeline(val, timelineData);
-
-        // If a background file was chosen during creation, upload it and then update the created timeline
-        if (selectedBgFile) {
-          const uploadedUrl = await uploadBackgroundImage(selectedBgFile, newTimelineId);
-          await updateTimelineSettings(newTimelineId, { settings: { backgroundImageUrl: uploadedUrl, backgroundImageMode: bgModeSelect?.value || 'stretch' } });
-        }
-
         close(false);
         if (onTimelineCreated) onTimelineCreated(newTimelineId);
       }
     } catch (err) {
+      console.error('Failed to save timeline:', err);
       alert(`Failed to ${renamingTimelineId ? "save" : "create"} timeline. Check console for details.`);
+    } finally {
+      submitBtn.disabled = false;
     }
   });
 
