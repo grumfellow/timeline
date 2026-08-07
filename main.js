@@ -1,5 +1,6 @@
 import * as d3 from 'd3';
-import { db, auth } from './firebase.js';
+import { db, auth, storage } from './firebase.js';
+import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, writeBatch, Timestamp } from 'firebase/firestore';
 import { 
   createUserWithEmailAndPassword, 
@@ -408,6 +409,21 @@ async function createTimeline(title, settings = {}) {
   return timelineId;
 }
 
+async function uploadBackgroundImage(file, timelineId) {
+  try {
+    const ts = Date.now();
+    const safeName = file.name.replace(/[^a-zA-Z0-9.-_]/g, '_');
+    const path = `timeline-backgrounds/${timelineId}/${ts}_${safeName}`;
+    const storageReference = storageRef(storage, path);
+    await uploadBytes(storageReference, file, { contentType: file.type });
+    const url = await getDownloadURL(storageReference);
+    return url;
+  } catch (err) {
+    console.error('Failed to upload background image:', err);
+    throw err;
+  }
+}
+
 async function updateTimelineSettings(timelineId, updates) {
   const currentUser = auth.currentUser;
   if (!currentUser) throw new Error("Must be logged in to update timeline settings.");
@@ -432,6 +448,8 @@ async function updateTimelineSettings(timelineId, updates) {
   if (updates.settings) {
     payload.settings = {
       backgroundColor: updates.settings.backgroundColor || meta.settings?.backgroundColor || DEFAULT_TIMELINE_SETTINGS.backgroundColor,
+      backgroundImageUrl: (updates.settings.backgroundImageUrl !== undefined) ? updates.settings.backgroundImageUrl : (meta.settings?.backgroundImageUrl || null),
+      backgroundImageMode: (updates.settings.backgroundImageMode !== undefined) ? updates.settings.backgroundImageMode : (meta.settings?.backgroundImageMode || 'stretch'),
       fontColor: updates.settings.fontColor || meta.settings?.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor,
       tierColors: {
         1: updates.settings.tierColors?.[1] || meta.settings?.tierColors?.[1] || DEFAULT_TIMELINE_SETTINGS.tierColors[1],
@@ -483,6 +501,13 @@ function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
   const tier1Input = document.getElementById("tier1Color");
   const tier2Input = document.getElementById("tier2Color");
   const tier3Input = document.getElementById("tier3Color");
+  const bgFileInput = document.getElementById('timelineBgFile');
+  const bgModeSelect = document.getElementById('timelineBgMode');
+  const bgPreview = document.getElementById('timelineBgPreview');
+  const bgRemoveBtn = document.getElementById('timelineBgRemoveBtn');
+
+  let selectedBgFile = null;
+  let existingBgUrl = null;
 
   function setTimelineInputs(settings = DEFAULT_TIMELINE_SETTINGS, isPublic = false, title = "") {
     if (titleInput) titleInput.value = title;
@@ -492,6 +517,22 @@ function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
     if (tier1Input) tier1Input.value = settings.tierColors?.[1] || DEFAULT_TIMELINE_SETTINGS.tierColors[1];
     if (tier2Input) tier2Input.value = settings.tierColors?.[2] || DEFAULT_TIMELINE_SETTINGS.tierColors[2];
     if (tier3Input) tier3Input.value = settings.tierColors?.[3] || DEFAULT_TIMELINE_SETTINGS.tierColors[3];
+    // background image handling
+    existingBgUrl = settings.backgroundImageUrl || null;
+    if (bgModeSelect) bgModeSelect.value = settings.backgroundImageMode || 'stretch';
+    if (bgPreview) {
+      if (existingBgUrl) {
+        bgPreview.src = existingBgUrl;
+        bgPreview.style.display = 'block';
+        if (bgRemoveBtn) bgRemoveBtn.style.display = 'inline-block';
+      } else {
+        bgPreview.src = '';
+        bgPreview.style.display = 'none';
+        if (bgRemoveBtn) bgRemoveBtn.style.display = 'none';
+      }
+    }
+    if (bgFileInput) bgFileInput.value = '';
+    selectedBgFile = null;
   }
 
   function openCreate(previousTimelineId) {
@@ -519,6 +560,32 @@ function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
 
   if (cancelBtn) cancelBtn.addEventListener("click", () => close(true));
 
+  if (bgFileInput) {
+    bgFileInput.addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      selectedBgFile = f;
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (bgPreview) {
+          bgPreview.src = reader.result;
+          bgPreview.style.display = 'block';
+        }
+        if (bgRemoveBtn) bgRemoveBtn.style.display = 'inline-block';
+      };
+      reader.readAsDataURL(f);
+    });
+  }
+
+  if (bgRemoveBtn) {
+    bgRemoveBtn.addEventListener('click', () => {
+      selectedBgFile = null;
+      existingBgUrl = null;
+      if (bgPreview) { bgPreview.src = ''; bgPreview.style.display = 'none'; }
+      if (bgFileInput) bgFileInput.value = '';
+      bgRemoveBtn.style.display = 'none';
+    });
+  }
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
 
@@ -543,12 +610,34 @@ function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
 
     try {
       if (renamingTimelineId) {
+        // If a new file was selected, upload it first
+        if (selectedBgFile) {
+          const uploadedUrl = await uploadBackgroundImage(selectedBgFile, renamingTimelineId);
+          timelineData.settings.backgroundImageUrl = uploadedUrl;
+          timelineData.settings.backgroundImageMode = bgModeSelect?.value || 'stretch';
+        } else if (existingBgUrl === null) {
+          // removed image
+          timelineData.settings.backgroundImageUrl = null;
+          timelineData.settings.backgroundImageMode = null;
+        } else {
+          // keep existing
+          timelineData.settings.backgroundImageUrl = existingBgUrl || undefined;
+          timelineData.settings.backgroundImageMode = bgModeSelect?.value || 'stretch';
+        }
+
         await updateTimelineSettings(renamingTimelineId, timelineData);
         const targetId = renamingTimelineId;
         close(false);
         if (onTimelineRenamed) onTimelineRenamed(targetId);
       } else {
         const newTimelineId = await createTimeline(val, timelineData);
+
+        // If a background file was chosen during creation, upload it and then update the created timeline
+        if (selectedBgFile) {
+          const uploadedUrl = await uploadBackgroundImage(selectedBgFile, newTimelineId);
+          await updateTimelineSettings(newTimelineId, { settings: { backgroundImageUrl: uploadedUrl, backgroundImageMode: bgModeSelect?.value || 'stretch' } });
+        }
+
         close(false);
         if (onTimelineCreated) onTimelineCreated(newTimelineId);
       }
@@ -1155,7 +1244,29 @@ async function init() {
 
     const containerEl = document.getElementById("timeline-container");
     const titleEl = document.querySelector("h2");
-    if (containerEl) containerEl.style.background = currentTimelineSettings.backgroundColor;
+    if (containerEl) {
+      // background color as fallback
+      containerEl.style.background = currentTimelineSettings.backgroundColor || DEFAULT_TIMELINE_SETTINGS.backgroundColor;
+      // apply background image if present
+      if (currentTimelineSettings.backgroundImageUrl) {
+        containerEl.style.backgroundImage = `url('${currentTimelineSettings.backgroundImageUrl}')`;
+        if ((currentTimelineSettings.backgroundImageMode || 'stretch') === 'tile') {
+          containerEl.style.backgroundRepeat = 'repeat';
+          containerEl.style.backgroundSize = 'auto';
+          containerEl.style.backgroundPosition = 'center';
+        } else {
+          // stretch/cover
+          containerEl.style.backgroundRepeat = 'no-repeat';
+          containerEl.style.backgroundSize = 'cover';
+          containerEl.style.backgroundPosition = 'center';
+        }
+      } else {
+        containerEl.style.backgroundImage = '';
+        containerEl.style.backgroundRepeat = '';
+        containerEl.style.backgroundSize = '';
+        containerEl.style.backgroundPosition = '';
+      }
+    }
     if (titleEl) titleEl.style.color = currentTimelineSettings.fontColor;
     // Update axis colors immediately
     try {

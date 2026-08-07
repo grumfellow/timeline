@@ -251,6 +251,18 @@
           <label for="tier3Color" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">Tier 3 Color</label>
           <input type="color" id="tier3Color" value="#10b981" style="width: 100%; height: 40px; border: 1px solid #cbd5e1; border-radius: 4px; padding: 0;" />
         </div>
+        <div style="grid-column: span 2;">
+          <label for="timelineBgFile" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">Background Image (jpeg/gif)</label>
+          <input type="file" id="timelineBgFile" accept="image/jpeg,image/gif" style="width: 100%;" />
+          <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+            <img id="timelineBgPreview" src="" alt="preview" style="max-width: 80px; max-height: 50px; border-radius: 4px; display: none; border: 1px solid #cbd5e1;" />
+            <select id="timelineBgMode" style="padding:6px;">
+              <option value="stretch">Stretch to fit</option>
+              <option value="tile">Tile</option>
+            </select>
+            <button type="button" id="timelineBgRemoveBtn" style="padding:6px 8px; display:none;">Remove</button>
+          </div>
+        </div>
       </div>
       <div style="display: flex; justify-content: flex-end; gap: 8px;">
         <button type="button" id="cancelTimelineBtn" style="padding: 8px 14px; cursor: pointer;">Cancel</button>
