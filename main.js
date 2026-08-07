@@ -635,6 +635,7 @@ async function loadEvents(timelineId = "personal-timeline") {
 // Map of loaded timeline metadata by timelineId
 let timelineMetaMap = new Map();
 let currentTimelineSettings = { ...DEFAULT_TIMELINE_SETTINGS };
+let currentFontSize = 11;
 
 // Fetch all timeline documents from Firestore and populate the dropdown based on user permissions
 async function loadTimelineOptions(selectedId = null) {
@@ -1097,14 +1098,49 @@ async function init() {
     });
   }
 
+  const fontSlider = document.getElementById('fontSizeSlider');
+  const fontSizeValue = document.getElementById('fontSizeValue');
+  if (fontSlider) {
+    fontSlider.value = currentFontSize;
+    if (fontSizeValue) fontSizeValue.textContent = `${currentFontSize}px`;
+    fontSlider.addEventListener('input', (e) => {
+      currentFontSize = Number(e.target.value);
+      if (fontSizeValue) fontSizeValue.textContent = `${currentFontSize}px`;
+      applyFontSize();
+      renderCurrentTimeline();
+    });
+  }
+
   setupAuthModal(async (user) => {
     activeTimelineId = await loadTimelineOptions(activeTimelineId);
     previousTimelineId = activeTimelineId;
     updateUIForTimelineOwner(activeTimelineId);
     applyTimelineStyles(timelineMetaMap.get(activeTimelineId));
     eventsData = activeTimelineId ? await loadEvents(activeTimelineId) : [];
+    applyFontSize();
     refreshChart(eventsData);
   });
+
+  function applyFontSize() {
+    const size = Number(currentFontSize) || 11;
+    // update canvas measurement font
+    ctx.font = `500 ${size}px system-ui, -apple-system, sans-serif`;
+
+    // update axis and event label sizes
+    try {
+      gAxis.selectAll('text').style('font-size', `${size}px`);
+      gEvents.selectAll('.event-node text').style('font-size', `${size}px`);
+    } catch (err) {
+      // ignore if selections not ready
+    }
+
+    // update DOM elements like title and tag badges
+    const titleEl = document.querySelector('h2');
+    if (titleEl) titleEl.style.fontSize = `${size + 6}px`;
+    document.querySelectorAll('.tag-badge').forEach(el => {
+      el.style.fontSize = `${Math.max(10, size - 1)}px`;
+    });
+  }
 
   function applyTimelineStyles(meta) {
     const settings = meta?.settings || DEFAULT_TIMELINE_SETTINGS;
@@ -1142,6 +1178,8 @@ async function init() {
       // Non-fatal: if selections aren't ready yet, ignore.
       console.warn('applyTimelineStyles: failed to update svg nodes immediately', err);
     }
+    // ensure font sizes are applied after style change
+    applyFontSize();
   }
 
   function renderTagBadges() {
@@ -1408,7 +1446,8 @@ function updateTimeline(scale, zoomFactor, eventsData) {
   allNodes.select("text")
     .text(d => d.title)
     .attr("x", d => d.isRange ? (d.endX - d.targetX) + 8 : 8)
-    .style("fill", currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor);
+    .style("fill", currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor)
+    .style("font-size", `${currentFontSize}px`);
 
   allNodes
     .attr("class", d => `event-node event-tier-${d.tier}`)
