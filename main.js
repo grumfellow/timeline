@@ -1121,6 +1121,27 @@ async function init() {
     const titleEl = document.querySelector("h2");
     if (containerEl) containerEl.style.background = currentTimelineSettings.backgroundColor;
     if (titleEl) titleEl.style.color = currentTimelineSettings.fontColor;
+    // Update axis colors immediately
+    try {
+      gAxis.selectAll("text").attr("fill", currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor);
+      gAxis.selectAll("path, line").attr("stroke", currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor);
+
+      // Update existing event nodes (circles, range lines, and labels)
+      if (gEvents) {
+        gEvents.selectAll('.event-node').select('circle')
+          .attr('fill', d => (currentTimelineSettings.tierColors?.[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]))
+          .attr('stroke', d => (currentTimelineSettings.tierColors?.[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]));
+
+        gEvents.selectAll('.event-node').select('line.range-line')
+          .attr('stroke', d => (currentTimelineSettings.tierColors?.[d.tier] || DEFAULT_TIMELINE_SETTINGS.tierColors[d.tier]));
+
+        gEvents.selectAll('.event-node').select('text')
+          .style('fill', currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor);
+      }
+    } catch (err) {
+      // Non-fatal: if selections aren't ready yet, ignore.
+      console.warn('applyTimelineStyles: failed to update svg nodes immediately', err);
+    }
   }
 
   function renderTagBadges() {
