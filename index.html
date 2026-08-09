@@ -16,18 +16,86 @@
       box-sizing: border-box;
       display: flex;
       flex-direction: column;
-      height: calc(100vh - 40px);
+      min-height: 100vh;
+      height: auto;
     }
 
     #timeline-container {
       width: 100%;
       flex: 1 1 auto;
       min-height: 250px;
+      height: 45vh;
       background: #1e293b;
       border-radius: 8px;
       overflow: hidden;
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
       cursor: grab;
+    }
+
+    .timeline-controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .font-size-control {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    #fontSizeSlider {
+      width: 220px;
+      max-width: 100%;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        margin: 12px;
+      }
+
+      .timeline-picker,
+      .timeline-controls,
+      .font-size-control {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .timeline-picker > div,
+      .timeline-controls > *,
+      .font-size-control > * {
+        width: 100%;
+      }
+
+      .timeline-picker {
+        gap: 8px;
+      }
+
+      .timeline-controls {
+        gap: 12px;
+      }
+
+      .font-size-control {
+        gap: 8px;
+      }
+
+      #timeline-container {
+        height: 50vh;
+      }
+
+      #timelineSelect,
+      #keywordFilterInput,
+      #fontSizeSlider {
+        width: 100%;
+      }
+
+      .timeline-controls button,
+      .timeline-picker button {
+        width: 100%;
+      }
     }
 
     #timeline-container:active {
@@ -162,9 +230,9 @@
   </div>
 
   <!-- Font size control -->
-  <div style="margin-bottom: 16px; display: flex; align-items: center; gap: 12px;">
-    <label for="fontSizeSlider" style="color: #94a3b8; font-size: 14px;">Font Size:</label>
-    <input id="fontSizeSlider" type="range" min="9" max="24" step="1" value="11" style="width: 220px;" />
+  <div class="font-size-control" style="margin-bottom: 16px;">
+    <label for="fontSizeSlider" style="color: #94a3b8; font-size: 14px; white-space: nowrap;">Font Size:</label>
+    <input id="fontSizeSlider" type="range" min="9" max="24" step="1" value="11" />
     <span id="fontSizeValue" style="color: #94a3b8; width: 40px; text-align: left;">11px</span>
   </div>
 
