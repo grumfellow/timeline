@@ -1262,9 +1262,9 @@ async function init() {
           containerEl.style.backgroundSize = 'auto';
           containerEl.style.backgroundPosition = 'center';
         } else {
-          // stretch/cover
+          // stretch while preserving the full image
           containerEl.style.backgroundRepeat = 'no-repeat';
-          containerEl.style.backgroundSize = 'cover';
+          containerEl.style.backgroundSize = 'contain';
           containerEl.style.backgroundPosition = 'center';
         }
       } else {
