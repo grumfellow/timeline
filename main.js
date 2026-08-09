@@ -765,6 +765,8 @@ async function loadTimelineOptions(selectedId = null) {
         isPublic: isPublic,
         settings: {
           backgroundColor: savedSettings.backgroundColor || DEFAULT_TIMELINE_SETTINGS.backgroundColor,
+          backgroundImageUrl: savedSettings.backgroundImageUrl || null,
+          backgroundImageMode: savedSettings.backgroundImageMode || 'stretch',
           fontColor: savedSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor,
           tierColors
         }
