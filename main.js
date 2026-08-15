@@ -21,15 +21,40 @@ const DEFAULT_TIMELINE_SETTINGS = {
   }
 };
 
+// URL parameter management for bookmarking/sharing timelines
+function getTimelineIdFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('timeline') || null;
+}
+
+function setTimelineUrlParam(timelineId) {
+  if (!timelineId) return;
+  const params = new URLSearchParams(window.location.search);
+  params.set('timeline', timelineId);
+  const newUrl = `${window.location.pathname}?${params.toString()}`;
+  window.history.replaceState({ timelineId }, '', newUrl);
+}
+
 function slugify(text) {
   return text.toLowerCase().trim().replace(/[^\w\s-]/g, "").replace(/[\s_-]+/g, "-");
 }
 
 function formatDateForInput(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+
+  if (y <= 0) {
+    const bcYear = Math.abs(y - 1);
+    return `${bcYear}-${m}-${d} BC`;
+  }
   return `${y}-${m}-${d}`;
+}
+
+function createUTCDate(year, month = 0, day = 1) {
+  const dateObj = new Date(Date.UTC(0, 0, 1));
+  dateObj.setUTCFullYear(year, month, day);
+  return dateObj;
 }
 
 function setupAuthModal(onAuthSuccess) {
@@ -173,12 +198,12 @@ async function createEvent(timelineId, eventData) {
     const eventsRef = collection(db, "timelines", timelineId, "events");
     const docData = {
       title: eventData.title,
-      date: Timestamp.fromDate(eventData.date),
+      date: eventData.date instanceof Date ? eventData.date.toISOString() : String(eventData.date),
       tier: eventData.tier,
       tags: eventData.tags || []
     };
     if (eventData.endDate) {
-      docData.endDate = Timestamp.fromDate(eventData.endDate);
+      docData.endDate = eventData.endDate instanceof Date ? eventData.endDate.toISOString() : String(eventData.endDate);
     }
 
     const docRef = await addDoc(eventsRef, docData);
@@ -197,12 +222,12 @@ async function updateEvent(timelineId, eventId, eventData) {
     const eventRef = doc(db, "timelines", timelineId, "events", eventId);
     const docData = {
       title: eventData.title,
-      date: Timestamp.fromDate(eventData.date),
+      date: eventData.date instanceof Date ? eventData.date.toISOString() : String(eventData.date),
       tier: eventData.tier,
       tags: eventData.tags || []
     };
     if (eventData.endDate) {
-      docData.endDate = Timestamp.fromDate(eventData.endDate);
+      docData.endDate = eventData.endDate instanceof Date ? eventData.endDate.toISOString() : String(eventData.endDate);
     } else {
       docData.endDate = null;
     }
@@ -346,13 +371,19 @@ function setupEventModal(getCurrentTimelineId, onEventsChanged) {
 
     if (!titleInput || !dateInput) return;
 
-    const [year, month, day] = dateInput.split("-");
-    const eventDate = new Date(year, month - 1, day);
+    const eventDate = parseEventDate(dateInput);
+    if (!eventDate) {
+      alert("Invalid start date. Use YYYY-MM-DD or YYYY BC.");
+      return;
+    }
 
     let eventEndDate = null;
     if (endDateInput) {
-      const [ey, em, ed] = endDateInput.split("-");
-      eventEndDate = new Date(ey, em - 1, ed);
+      eventEndDate = parseEventDate(endDateInput);
+      if (!eventEndDate) {
+        alert("Invalid end date. Use YYYY-MM-DD or YYYY BC.");
+        return;
+      }
     }
 
     const payload = { 
@@ -385,11 +416,11 @@ async function createTimeline(title, settings = {}) {
   if (!currentUser) throw new Error("Must be logged in to create a timeline.");
 
   const cleanTitle = title.trim();
-  const timelineId = slugify(cleanTitle);
-  if (!timelineId) throw new Error("Invalid timeline title");
+  if (!cleanTitle) throw new Error("Invalid timeline title");
 
-  const timelineRef = doc(db, "timelines", timelineId);
-  await setDoc(timelineRef, {
+  // Use addDoc to let Firestore generate a unique GUID instead of using slugified name
+  const timelinesRef = collection(db, "timelines");
+  const docRef = await addDoc(timelinesRef, {
     title: cleanTitle,
     ownerEmail: currentUser.email,
     isPublic: settings.isPublic === true,
@@ -403,8 +434,9 @@ async function createTimeline(title, settings = {}) {
         3: (settings.tierColors?.[3] || DEFAULT_TIMELINE_SETTINGS.tierColors[3])
       }
     }
-  }, { merge: true });
+  });
 
+  const timelineId = docRef.id;
   console.log(`Successfully created timeline '${cleanTitle}' with ID: ${timelineId}`);
   return timelineId;
 }
@@ -469,12 +501,98 @@ async function updateTimelineSettings(timelineId, updates) {
   }
 }
 
+async function loadUserTimelineView(timelineId) {
+  const currentUser = auth.currentUser;
+  if (!currentUser || !timelineId) return null;
+
+  try {
+    const viewDoc = await getDoc(doc(db, "users", currentUser.uid, "timelineViews", timelineId));
+    if (!viewDoc.exists()) return null;
+    return viewDoc.data();
+  } catch (err) {
+    console.error("Error loading user timeline view:", err);
+    return null;
+  }
+}
+
+async function saveUserTimelineView(timelineId) {
+  const currentUser = auth.currentUser;
+  if (!currentUser || !timelineId) return;
+
+  const viewData = {
+    zoom: {
+      k: currentTransform.k,
+      x: currentTransform.x
+    },
+    savedAt: Timestamp.now()
+  };
+
+  if (lastSavedView && lastSavedView.k === viewData.zoom.k && lastSavedView.x === viewData.zoom.x) {
+    return;
+  }
+
+  lastSavedView = { ...viewData.zoom };
+
+  try {
+    const viewRef = doc(db, "users", currentUser.uid, "timelineViews", timelineId);
+    await setDoc(viewRef, viewData, { merge: true });
+  } catch (err) {
+    console.error("Error saving user timeline view:", err);
+  }
+}
+
+function scheduleSaveUserTimelineView(timelineId) {
+  if (zoomSaveTimeout) {
+    clearTimeout(zoomSaveTimeout);
+  }
+
+  zoomSaveTimeout = setTimeout(() => {
+    saveUserTimelineView(timelineId).catch(() => {});
+    zoomSaveTimeout = null;
+  }, 700);
+}
+
+// Delete a timeline and all its associated data
+async function deleteTimeline(timelineId) {
+  if (!auth.currentUser) throw new Error("Must be logged in to delete a timeline.");
+  
+  try {
+    // Delete all events in this timeline
+    const eventsRef = collection(db, "timelines", timelineId, "events");
+    const eventsSnapshot = await getDocs(eventsRef);
+    
+    const batch = writeBatch(db);
+    eventsSnapshot.forEach((eventDoc) => {
+      batch.delete(eventDoc.ref);
+    });
+    
+    // Delete all user timeline views
+    const viewsRef = collection(db, "userTimelineViews");
+    const viewsQuery = getDocs(viewsRef);
+    (await viewsQuery).forEach((viewDoc) => {
+      if (viewDoc.data().timelineId === timelineId) {
+        batch.delete(viewDoc.ref);
+      }
+    });
+    
+    // Delete the timeline document itself
+    batch.delete(doc(db, "timelines", timelineId));
+    
+    await batch.commit();
+    console.log(`Successfully deleted timeline '${timelineId}' and all associated data`);
+  } catch (error) {
+    console.error(`Error deleting timeline '${timelineId}':`, error);
+    throw error;
+  }
+}
+
 function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
   const modal = document.getElementById("timelineModal");
   const modalTitle = document.getElementById("timelineModalTitle");
   const form = document.getElementById("timelineForm");
   const cancelBtn = document.getElementById("cancelTimelineBtn");
   const submitBtn = document.getElementById("createTimelineBtn");
+  const deleteBtn = document.getElementById("deleteTimelineBtn");
   const titleInput = document.getElementById("timelineTitle");
 
   if (!modal || !form) return null;
@@ -488,6 +606,7 @@ function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
     renamingTimelineId = null;
     if (modalTitle) modalTitle.textContent = "Create New Timeline";
     if (submitBtn) submitBtn.textContent = "Save";
+    if (deleteBtn) deleteBtn.style.display = "none";
 
     if (restoreSelection && restoreTimelineId) {
       const selectEl = document.getElementById("timelineSelect");
@@ -554,11 +673,59 @@ function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
     setTimelineInputs(settings, isPublic, currentTitle || "");
     if (modalTitle) modalTitle.textContent = "Edit Timeline";
     if (submitBtn) submitBtn.textContent = "Save";
+    if (deleteBtn) deleteBtn.style.display = "inline-block";
     modal.style.display = "flex";
     titleInput?.focus();
   }
 
   if (cancelBtn) cancelBtn.addEventListener("click", () => close(true));
+
+  if (deleteBtn) {
+    deleteBtn.addEventListener("click", async () => {
+      if (!renamingTimelineId) return;
+      
+      const meta = timelineMetaMap.get(renamingTimelineId);
+      const timelineName = meta?.title || renamingTimelineId;
+      
+      // Confirmation dialog
+      const confirmed = confirm(
+        `Are you sure you want to delete "${timelineName}"?\n\nThis will permanently delete the timeline and all its events. This action cannot be undone.`
+      );
+      
+      if (!confirmed) return;
+      
+      try {
+        deleteBtn.disabled = true;
+        deleteBtn.textContent = "Deleting...";
+        
+        await deleteTimeline(renamingTimelineId);
+        
+        // Close modal
+        close(false);
+        
+        // Clear active timeline and events
+        activeTimelineId = null;
+        eventsData = [];
+        
+        // Reload timeline options without selecting any
+        const selectEl = document.getElementById("timelineSelect");
+        if (selectEl) {
+          selectEl.value = "";
+        }
+        await loadTimelineOptions(null);
+        
+        // Clear UI for no timeline selected
+        updateUIForTimelineOwner(null);
+        refreshChart([]);
+      } catch (err) {
+        console.error("Error deleting timeline:", err);
+        alert("Failed to delete timeline. Please try again.");
+      } finally {
+        deleteBtn.disabled = false;
+        deleteBtn.textContent = "Delete Timeline";
+      }
+    });
+  }
 
   if (bgFileInput) {
     bgFileInput.addEventListener('change', (e) => {
@@ -654,7 +821,7 @@ function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
   return { openCreate, openRename };
 }
 
-// Helper to update controls (add event, import CSV, rename, public checkbox) based on current user ownership
+// Helper to update controls (add event, import CSV, AI import, rename, public checkbox) based on current user ownership
 function updateUIForTimelineOwner(timelineId) {
   const currentUser = auth.currentUser;
   const userEmail = currentUser ? currentUser.email : null;
@@ -662,14 +829,19 @@ function updateUIForTimelineOwner(timelineId) {
 
   const isOwner = Boolean(currentUser && meta && meta.ownerEmail === userEmail);
 
-  // Toggle buttons for adding events / CSV import / rename
+  // Toggle buttons for adding events / CSV import / AI import / rename
   const openAddEventBtn = document.getElementById("openAddEventBtn");
   const openImportCsvBtn = document.getElementById("openImportCsvBtn");
+  const openAiImportBtn = document.getElementById("openAiImportBtn");
   const renameTimelineBtn = document.getElementById("renameTimelineBtn");
+  const shareTimelineBtn = document.getElementById("shareTimelineBtn");
 
   if (openAddEventBtn) openAddEventBtn.style.display = isOwner ? "inline-block" : "none";
   if (openImportCsvBtn) openImportCsvBtn.style.display = isOwner ? "inline-block" : "none";
+  if (openAiImportBtn) openAiImportBtn.style.display = isOwner ? "inline-block" : "none";
   if (renameTimelineBtn) renameTimelineBtn.style.display = isOwner ? "inline-block" : "none";
+  // Share button is visible to all users who can view this timeline
+  if (shareTimelineBtn) shareTimelineBtn.style.display = timelineId ? "inline-block" : "none";
 
   // Timeline public checkbox control
   const visibilityContainer = document.getElementById("timelineVisibilityContainer");
@@ -693,9 +865,16 @@ async function loadEvents(timelineId = "personal-timeline") {
     querySnapshot.forEach((doc) => {
       const data = doc.data();
       const rawDate = data.date || data.timestamp;
+      let parsedDate = null;
 
-                  let parsedDate = rawDate?.toDate ? rawDate.toDate() : new Date(rawDate);
-      if (isNaN(parsedDate.getTime())) return;
+      if (rawDate?.toDate) {
+        parsedDate = rawDate.toDate();
+      } else if (typeof rawDate === 'string') {
+        parsedDate = parseEventDate(rawDate) || new Date(rawDate);
+      } else {
+        parsedDate = new Date(rawDate);
+      }
+      if (!parsedDate || isNaN(parsedDate.getTime())) return;
 
       const rawEndDate = data.endDate || data.end_date;
       let parsedEndDate = null;
@@ -730,6 +909,9 @@ async function loadEvents(timelineId = "personal-timeline") {
 let timelineMetaMap = new Map();
 let currentTimelineSettings = { ...DEFAULT_TIMELINE_SETTINGS };
 let currentFontSize = 11;
+let currentTransform = d3.zoomIdentity;
+let zoomSaveTimeout = null;
+let lastSavedView = null;
 
 // Fetch all timeline documents from Firestore and populate the dropdown based on user permissions
 async function loadTimelineOptions(selectedId = null) {
@@ -879,30 +1061,71 @@ function parseEventDate(dateStr) {
   if (!dateStr) return null;
 
   const trimmed = dateStr.trim();
-  const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  const upperTrimmed = trimmed.toUpperCase();
+  const bcMatch = upperTrimmed.match(/\s*(BC|BCE)$/);
+  const adMatch = upperTrimmed.match(/\s*(AD|CE)$/);
+  const isBC = Boolean(bcMatch);
+  const isAD = Boolean(adMatch);
+  const cleaned = trimmed.replace(/\s*(BC|BCE|AD|CE)$/i, "").trim();
+
+  const slashMatch = cleaned.match(/^(\d{1,2})\/(\d{1,2})\/(\d{1,4})$/);
   if (slashMatch) {
-    const [, month, day, year] = slashMatch;
-    const dateObj = new Date(Number(year), Number(month) - 1, Number(day));
+    const [, month, day, yearStr] = slashMatch;
+    let year = Number(yearStr);
+    if (isBC) year = -(Math.abs(year) - 1);
+    const dateObj = createUTCDate(year, Number(month) - 1, Number(day));
     return isNaN(dateObj.getTime()) ? null : dateObj;
   }
 
-  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const isoMatch = cleaned.match(/^(-?\d+)-(\d{2})-(\d{2})$/);
   if (isoMatch) {
-    const [, year, month, day] = isoMatch;
-    const dateObj = new Date(Number(year), Number(month) - 1, Number(day));
+    const [, yearStr, month, day] = isoMatch;
+    let year = Number(yearStr);
+    if (isBC) year = -(Math.abs(year) - 1);
+    const dateObj = createUTCDate(year, Number(month) - 1, Number(day));
     return isNaN(dateObj.getTime()) ? null : dateObj;
   }
 
-  const dateObj = new Date(trimmed);
+  const yearOnlyMatch = cleaned.match(/^(-?\d+)$/);
+  if (yearOnlyMatch) {
+    let year = Number(yearOnlyMatch[1]);
+    if (isBC) year = -(Math.abs(year) - 1);
+    const dateObj = createUTCDate(year, 0, 1);
+    return isNaN(dateObj.getTime()) ? null : dateObj;
+  }
+
+  const dateObj = new Date(cleaned);
   return isNaN(dateObj.getTime()) ? null : dateObj;
 }
 
-async function importEventsToTimeline(timelineId, rows) {
-  const results = { imported: 0, skipped: 0, skippedRows: [] };
-  const validEvents = [];
+function getNormalizedEventKey(title, dateObj) {
+  if (!title || !dateObj || Number.isNaN(dateObj.getTime())) return null;
+  const normalizedTitle = String(title).trim().toLowerCase();
+  const dateKey = new Date(dateObj.getTime() - (dateObj.getTimezoneOffset() * 60000));
+  return `${normalizedTitle}::${dateKey.toISOString().slice(0, 10)}`;
+}
 
-    for (const row of rows) {
-        const title = (row.title || "").trim() || "Untitled Event";
+async function importEventsToTimeline(timelineId, rows) {
+  const results = { imported: 0, skipped: 0, duplicates: 0, skippedRows: [] };
+  const validEvents = [];
+  const existingEventKeys = new Set();
+  const importedEventKeys = new Set();
+
+  try {
+    const existingEventsSnapshot = await getDocs(collection(db, "timelines", timelineId, "events"));
+    existingEventsSnapshot.forEach((docSnapshot) => {
+      const data = docSnapshot.data();
+      const title = data.title || "";
+      const dateValue = data.date?.toDate ? data.date.toDate() : parseEventDate(data.date);
+      const key = getNormalizedEventKey(title, dateValue);
+      if (key) existingEventKeys.add(key);
+    });
+  } catch (error) {
+    console.error("Error loading existing events for duplicate detection:", error);
+  }
+
+  for (const row of rows) {
+    const title = (row.title || "").trim() || "Untitled Event";
     const dateObj = parseEventDate(row.date || row.start_date);
 
     if (!dateObj) {
@@ -911,12 +1134,30 @@ async function importEventsToTimeline(timelineId, rows) {
       continue;
     }
 
+    const eventKey = getNormalizedEventKey(title, dateObj);
+    if (!eventKey) {
+      results.skipped++;
+      results.skippedRows.push(`"${title}" (invalid date: "${row.date || row.start_date || ""}")`);
+      continue;
+    }
+
+    if (existingEventKeys.has(eventKey) || importedEventKeys.has(eventKey)) {
+      results.duplicates++;
+      results.skippedRows.push(`"${title}" (${dateObj.toISOString().slice(0, 10)})`);
+      continue;
+    }
+
+    importedEventKeys.add(eventKey);
+
     const endDateObj = parseEventDate(row.end_date || row.enddate);
 
-    const tags = (row.tags || row.tag || "")
-      .split(",")
-      .map(t => t.trim())
-      .filter(Boolean);
+    const rawTags = row.tags ?? row.tag ?? [];
+    const tags = Array.isArray(rawTags)
+      ? rawTags.map(t => String(t).trim()).filter(Boolean)
+      : String(rawTags || "")
+          .split(",")
+          .map(t => t.trim())
+          .filter(Boolean);
 
     validEvents.push({
       title,
@@ -932,8 +1173,8 @@ async function importEventsToTimeline(timelineId, rows) {
     const batch = writeBatch(db);
     const chunk = validEvents.slice(i, i + BATCH_SIZE);
 
-        for (const event of chunk) {
-            const eventRef = doc(collection(db, "timelines", timelineId, "events"));
+    for (const event of chunk) {
+      const eventRef = doc(collection(db, "timelines", timelineId, "events"));
       const docData = {
         title: event.title,
         date: Timestamp.fromDate(event.date),
@@ -1041,12 +1282,15 @@ function setupCsvImport(getCurrentTimelineId, onImportComplete) {
       const results = await importEventsToTimeline(activeTimelineId, rows);
 
       let message = `Imported ${results.imported} event${results.imported === 1 ? "" : "s"}.`;
+      if (results.duplicates > 0) {
+        message += ` Skipped ${results.duplicates} duplicate event${results.duplicates === 1 ? "" : "s"} already in the timeline.`;
+      }
       if (results.skipped > 0) {
         message += ` Skipped ${results.skipped} row${results.skipped === 1 ? "" : "s"} with invalid dates.`;
       }
 
       if (statusEl) {
-        statusEl.style.color = results.skipped > 0 ? "#b45309" : "#15803d";
+        statusEl.style.color = (results.skipped > 0 || results.duplicates > 0) ? "#b45309" : "#15803d";
         statusEl.textContent = message;
       }
 
@@ -1061,6 +1305,321 @@ function setupCsvImport(getCurrentTimelineId, onImportComplete) {
         statusEl.style.color = "#b45309";
         statusEl.textContent = "Failed to import CSV. Check console for details.";
       }
+      if (importBtn) importBtn.disabled = false;
+    }
+  });
+}
+
+const GEMINI_API_KEY_STORAGE_KEY = "timelineGeminiApiKey";
+const GEMINI_MODEL_STORAGE_KEY = "timelineGeminiModel";
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
+
+function getSavedGeminiApiKey() {
+  try {
+    return localStorage.getItem(GEMINI_API_KEY_STORAGE_KEY) || "";
+  } catch (error) {
+    console.warn("Unable to read saved Gemini API key:", error);
+    return "";
+  }
+}
+
+function setSavedGeminiApiKey(apiKey) {
+  try {
+    if (!apiKey) {
+      localStorage.removeItem(GEMINI_API_KEY_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(GEMINI_API_KEY_STORAGE_KEY, apiKey.trim());
+  } catch (error) {
+    console.warn("Unable to save Gemini API key:", error);
+  }
+}
+
+function getSavedGeminiModel() {
+  try {
+    const stored = localStorage.getItem(GEMINI_MODEL_STORAGE_KEY);
+    return stored && stored.trim() ? stored.trim() : DEFAULT_GEMINI_MODEL;
+  } catch (error) {
+    console.warn("Unable to read saved Gemini model:", error);
+    return DEFAULT_GEMINI_MODEL;
+  }
+}
+
+function setSavedGeminiModel(model) {
+  try {
+    const normalized = (model || DEFAULT_GEMINI_MODEL).trim();
+    localStorage.setItem(GEMINI_MODEL_STORAGE_KEY, normalized);
+  } catch (error) {
+    console.warn("Unable to save Gemini model:", error);
+  }
+}
+
+function normalizeAiEventRow(rawRow) {
+  if (!rawRow || typeof rawRow !== "object") return null;
+
+  const title = String(rawRow.title || rawRow.name || rawRow.event || rawRow.label || "").trim();
+  if (!title) return null;
+
+  const dateValue = rawRow.date || rawRow.start_date || rawRow.startDate || rawRow.when || "";
+  if (!dateValue) return null;
+
+  const normalized = {
+    title,
+    date: String(dateValue).trim()
+  };
+
+  if (rawRow.end_date || rawRow.endDate) {
+    normalized.end_date = String(rawRow.end_date || rawRow.endDate).trim();
+  }
+
+  const tierValue = Number(rawRow.tier ?? rawRow.importance ?? rawRow.priority ?? 1);
+  if (Number.isFinite(tierValue)) {
+    normalized.tier = Math.min(3, Math.max(1, tierValue));
+  } else {
+    normalized.tier = 1;
+  }
+
+  const tagsValue = rawRow.tags || rawRow.tag || rawRow.categories || rawRow.labels || [];
+  if (Array.isArray(tagsValue)) {
+    normalized.tags = tagsValue.map(tag => String(tag).trim()).filter(Boolean).slice(0, 20);
+  } else if (typeof tagsValue === "string") {
+    normalized.tags = tagsValue.split(",").map(tag => tag.trim()).filter(Boolean).slice(0, 20);
+  }
+
+  return normalized;
+}
+
+function parseGeminiGeneratedEvents(apiResponse) {
+  const contentText = apiResponse?.candidates?.[0]?.content?.parts
+    ?.map((part) => part?.text || "")
+    .join("\n")
+    .trim();
+
+  if (!contentText) {
+    throw new Error("Gemini did not return any generated content.");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(contentText);
+  } catch (error) {
+    const codeFenceMatch = contentText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    const fallbackText = codeFenceMatch ? codeFenceMatch[1] : contentText.replace(/^[^\[]+/, "").replace(/[^\]]+$/, "");
+    try {
+      parsed = JSON.parse(fallbackText);
+    } catch (fallbackError) {
+      throw new Error("Gemini output was not valid JSON. Please adjust the prompt to request an array of events.");
+    }
+  }
+
+  const eventArray = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed?.events)
+      ? parsed.events
+      : Array.isArray(parsed?.data)
+        ? parsed.data
+        : Array.isArray(parsed?.items)
+          ? parsed.items
+          : null;
+
+  if (!eventArray) {
+    throw new Error("Gemini output did not include a valid event array.");
+  }
+
+  const rows = eventArray
+    .map((item) => normalizeAiEventRow(item))
+    .filter(Boolean);
+
+  if (!rows.length) {
+    throw new Error("Gemini returned no usable events. Please refine the prompt.");
+  }
+
+  return rows;
+}
+
+function setupAiImport(getCurrentTimelineId, onImportComplete) {
+  const openBtn = document.getElementById("openAiImportBtn");
+  const modal = document.getElementById("aiImportModal");
+  const form = document.getElementById("aiImportForm");
+  const cancelBtn = document.getElementById("cancelAiImportBtn");
+  const apiKeyInput = document.getElementById("geminiApiKeyInput");
+  const modelInput = document.getElementById("geminiModelInput");
+  const promptInput = document.getElementById("aiPromptInput");
+  const statusEl = document.getElementById("aiImportStatus");
+  const importBtn = document.getElementById("aiImportBtn");
+  const saveApiKeyBtn = document.getElementById("saveGeminiApiKeyBtn");
+
+  if (!openBtn || !modal || !form || !apiKeyInput || !modelInput || !promptInput) return;
+
+  apiKeyInput.value = getSavedGeminiApiKey();
+  modelInput.value = getSavedGeminiModel();
+
+  function closeModal() {
+    modal.style.display = "none";
+    form.reset();
+    apiKeyInput.value = getSavedGeminiApiKey();
+    modelInput.value = getSavedGeminiModel();
+    if (statusEl) {
+      statusEl.style.display = "none";
+      statusEl.textContent = "";
+    }
+    if (importBtn) importBtn.disabled = false;
+  }
+
+  function openModal() {
+    apiKeyInput.value = getSavedGeminiApiKey();
+    modelInput.value = getSavedGeminiModel();
+    form.reset();
+    apiKeyInput.value = getSavedGeminiApiKey();
+    modelInput.value = getSavedGeminiModel();
+    if (statusEl) {
+      statusEl.style.display = "none";
+      statusEl.textContent = "";
+    }
+    if (importBtn) importBtn.disabled = false;
+    modal.style.display = "flex";
+  }
+
+  if (saveApiKeyBtn) {
+    saveApiKeyBtn.addEventListener("click", () => {
+      const key = apiKeyInput.value.trim();
+      if (!key) {
+        if (statusEl) {
+          statusEl.style.display = "block";
+          statusEl.style.color = "#b45309";
+          statusEl.textContent = "Enter an API key before saving it.";
+        }
+        return;
+      }
+      setSavedGeminiApiKey(key);
+      if (statusEl) {
+        statusEl.style.display = "block";
+        statusEl.style.color = "#15803d";
+        statusEl.textContent = "Gemini API key saved locally for future imports.";
+      }
+    });
+  }
+
+  openBtn.addEventListener("click", () => {
+    openModal();
+    if (!getCurrentTimelineId() && statusEl) {
+      statusEl.style.display = "block";
+      statusEl.style.color = "#b45309";
+      statusEl.textContent = "Please select a timeline before generating events.";
+    }
+  });
+
+  if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const activeTimelineId = getCurrentTimelineId();
+    if (!activeTimelineId) {
+      if (statusEl) {
+        statusEl.style.display = "block";
+        statusEl.style.color = "#b45309";
+        statusEl.textContent = "Please select a timeline before generating events.";
+      }
+      return;
+    }
+
+    const apiKey = apiKeyInput.value.trim();
+    if (!apiKey) {
+      if (statusEl) {
+        statusEl.style.display = "block";
+        statusEl.style.color = "#b45309";
+        statusEl.textContent = "Please enter your Gemini API key first.";
+      }
+      return;
+    }
+
+    const modelName = (modelInput.value || DEFAULT_GEMINI_MODEL).trim() || DEFAULT_GEMINI_MODEL;
+    setSavedGeminiModel(modelName);
+
+    const prompt = promptInput.value.trim();
+    if (!prompt) {
+      if (statusEl) {
+        statusEl.style.display = "block";
+        statusEl.style.color = "#b45309";
+        statusEl.textContent = "Please describe the events you want generated.";
+      }
+      return;
+    }
+
+    setSavedGeminiApiKey(apiKey);
+
+    if (importBtn) importBtn.disabled = true;
+    if (statusEl) {
+      statusEl.style.display = "block";
+      statusEl.style.color = "#334155";
+      statusEl.textContent = "Generating events with Gemini...";
+    }
+
+    try {
+      const requestBody = {
+        contents: [{
+          role: "user",
+          parts: [{
+            text: `You are a historical timeline event generator. Generate a JSON array of events matching the user's request. 
+Return only valid JSON, no markdown fences, no explanatory text.
+Each item must have these exact fields: 
+- title: string
+- date: string in a supported format such as YYYY-MM-DD, YYYY, or YYYY BC
+- end_date: optional string if it spans a range
+- tier: integer from 1 to 3
+- tags: array of strings
+Rules:
+- Keep dates realistic and usable by the timeline app.
+- Use title strings only, not bullets or extra narration.
+- Ensure each object is valid JSON.
+- If the user request is broad, pick a set of meaningful events rather than a huge list.
+- Prefer 5 to 25 events unless the request is explicit.
+User request: ${prompt}`
+          }]
+        }]
+      };
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(`Gemini API request failed (${response.status}): ${detail}`);
+      }
+
+      const data = await response.json();
+      const rows = parseGeminiGeneratedEvents(data);
+      const results = await importEventsToTimeline(activeTimelineId, rows);
+
+      let message = `Generated and imported ${results.imported} event${results.imported === 1 ? "" : "s"}.`;
+      if (results.duplicates > 0) {
+        message += ` Skipped ${results.duplicates} duplicate event${results.duplicates === 1 ? "" : "s"} already in the timeline.`;
+      }
+      if (results.skipped > 0) {
+        message += ` Skipped ${results.skipped} row${results.skipped === 1 ? "" : "s"} with invalid dates.`;
+      }
+
+      if (statusEl) {
+        statusEl.style.color = (results.skipped > 0 || results.duplicates > 0) ? "#b45309" : "#15803d";
+        statusEl.textContent = message;
+      }
+
+      if (results.imported > 0) {
+        onImportComplete();
+      }
+    } catch (err) {
+      console.error("AI event generation failed:", err);
+      if (statusEl) {
+        statusEl.style.color = "#b45309";
+        statusEl.textContent = err.message || "Failed to generate events with Gemini.";
+      }
+    } finally {
       if (importBtn) importBtn.disabled = false;
     }
   });
@@ -1086,6 +1645,20 @@ function getTextWidth(text) {
   return ctx.measureText(text).width;
 }
 
+function computeRightLabelReserve(events) {
+  if (!events || events.length === 0) return 0;
+  let maxW = 0;
+  events.forEach(e => {
+    try {
+      const w = getTextWidth(e.title || "");
+      if (w > maxW) maxW = w;
+    } catch (err) {
+      // ignore measurement errors
+    }
+  });
+  // add buffer for icon, padding and some breathing room
+  return Math.ceil(maxW) + 28;
+}
 const xBaseScale = d3.scaleTime()
   .domain([new Date(1960, 0, 1), new Date(2030, 0, 1)])
   .range([margin.left, width - margin.right]);
@@ -1170,7 +1743,6 @@ async function init() {
   let activeTimelineId = null;
   let previousTimelineId = null;
   let eventsData = [];
-  let currentTransform = d3.zoomIdentity;
   let selectedTags = new Set();
 
   const keywordInput = document.getElementById("keywordFilterInput");
@@ -1208,13 +1780,25 @@ async function init() {
   }
 
   setupAuthModal(async (user) => {
+    // Check if timeline ID is provided in URL, use that as starting point
+    const urlTimelineId = getTimelineIdFromUrl();
+    activeTimelineId = urlTimelineId || activeTimelineId;
+    
     activeTimelineId = await loadTimelineOptions(activeTimelineId);
     previousTimelineId = activeTimelineId;
+    
+    // Update URL with the selected timeline
+    if (activeTimelineId) {
+      setTimelineUrlParam(activeTimelineId);
+    }
+    
     updateUIForTimelineOwner(activeTimelineId);
     applyTimelineStyles(timelineMetaMap.get(activeTimelineId));
     eventsData = activeTimelineId ? await loadEvents(activeTimelineId) : [];
     applyFontSize();
-    refreshChart(eventsData);
+    const initialView = activeTimelineId ? await loadUserTimelineView(activeTimelineId) : null;
+    const transform = initialView?.zoom ? d3.zoomIdentity.translate(initialView.zoom.x || 0, 0).scale(initialView.zoom.k || 1) : d3.zoomIdentity;
+    refreshChart(eventsData, transform);
   });
 
   function applyFontSize() {
@@ -1366,7 +1950,7 @@ async function init() {
     updateTimeline(currentScale, currentTransform.k, filtered);
   }
 
-  function refreshChart(data) {
+  function refreshChart(data, initialTransform = null) {
     selectedTags.clear();
     renderTagBadges();
     applyTimelineStyles(timelineMetaMap.get(activeTimelineId));
@@ -1380,15 +1964,108 @@ async function init() {
     } else {
       xBaseScale.domain([new Date(1960, 0, 1), new Date(2030, 0, 1)]);
     }
-    currentTransform = d3.zoomIdentity;
-    svg.call(zoom.transform, d3.zoomIdentity);
-    updateTimeline(xBaseScale, 1, getFilteredEvents());
+
+    // full pixel range across container
+    xBaseScale.range([margin.left, width - margin.right]);
+
+    // Reserve time on the right (extend domain) so labels for last events fit
+    try {
+      const reserve = computeRightLabelReserve(data);
+      const innerW = Math.max(100, width - margin.left - margin.right);
+      const domain = xBaseScale.domain();
+      const durationMs = domain[1].getTime() - domain[0].getTime();
+      const extraMs = Math.round((reserve / innerW) * Math.max(1, durationMs));
+      const extendedEnd = new Date(domain[1].getTime() + extraMs + 1000);
+      xBaseScale.domain([domain[0], extendedEnd]);
+    } catch (err) {
+      // if anything fails, fall back to original domain
+    }
+
+    if (initialTransform) {
+      currentTransform = initialTransform;
+    } else {
+      currentTransform = d3.zoomIdentity;
+    }
+
+    svg.call(zoom.transform, currentTransform);
+    const scale = currentTransform.rescaleX(xBaseScale);
+    updateTimeline(scale, currentTransform.k, getFilteredEvents());
   }
 
   function zoomed(event) {
     currentTransform = event.transform;
     const newXScale = event.transform.rescaleX(xBaseScale);
     updateTimeline(newXScale, event.transform.k, getFilteredEvents());
+
+    if (auth.currentUser && activeTimelineId) {
+      scheduleSaveUserTimelineView(activeTimelineId);
+    }
+  }
+
+  const resetTimelineViewBtn = document.getElementById("resetTimelineViewBtn");
+  if (resetTimelineViewBtn) {
+    resetTimelineViewBtn.addEventListener("click", () => {
+      if (!eventsData || eventsData.length === 0) return;
+
+      const extent = d3.extent(eventsData, d => d.date);
+      if (extent[0] && extent[1]) {
+        xBaseScale.domain([
+          d3.timeYear.offset(extent[0], -1),
+          d3.timeYear.offset(extent[1], 1)
+        ]);
+      } else {
+        xBaseScale.domain([new Date(1960, 0, 1), new Date(2030, 0, 1)]);
+      }
+
+      xBaseScale.range([margin.left, width - margin.right]);
+
+      try {
+        const reserve = computeRightLabelReserve(eventsData);
+        const innerW = Math.max(100, width - margin.left - margin.right);
+        const domain = xBaseScale.domain();
+        const durationMs = domain[1].getTime() - domain[0].getTime();
+        const extraMs = Math.round((reserve / innerW) * Math.max(1, durationMs));
+        const extendedEnd = new Date(domain[1].getTime() + extraMs + 1000);
+        xBaseScale.domain([domain[0], extendedEnd]);
+      } catch (err) {
+        // ignore and keep default domain
+      }
+
+      currentTransform = d3.zoomIdentity;
+      svg.call(zoom.transform, currentTransform);
+      const scale = currentTransform.rescaleX(xBaseScale);
+      updateTimeline(scale, currentTransform.k, getFilteredEvents());
+
+      if (auth.currentUser && activeTimelineId) {
+        scheduleSaveUserTimelineView(activeTimelineId);
+      }
+    });
+  }
+
+  // Share timeline button - copies current URL to clipboard
+  const shareTimelineBtn = document.getElementById("shareTimelineBtn");
+  if (shareTimelineBtn) {
+    shareTimelineBtn.addEventListener("click", async () => {
+      if (!activeTimelineId) return;
+      
+      try {
+        const url = `${window.location.origin}${window.location.pathname}?timeline=${activeTimelineId}`;
+        await navigator.clipboard.writeText(url);
+        
+        // Show feedback
+        const originalText = shareTimelineBtn.textContent;
+        shareTimelineBtn.textContent = "✓ Copied to clipboard!";
+        shareTimelineBtn.style.background = "#059669";
+        
+        setTimeout(() => {
+          shareTimelineBtn.textContent = originalText;
+          shareTimelineBtn.style.background = "#7c3aed";
+        }, 2000);
+      } catch (err) {
+        console.error("Failed to copy URL:", err);
+        alert("Failed to copy URL. You can manually copy it from the browser address bar.");
+      }
+    });
   }
 
   if (keywordInput) {
@@ -1398,9 +2075,10 @@ async function init() {
   }
 
   const zoom = d3.zoom()
-    .scaleExtent([1, 80])
+    .scaleExtent([1, 500])
     .extent([[margin.left, 0], [width - margin.right, height]])
-    .translateExtent([[margin.left, -Infinity], [width - margin.right, Infinity]])
+    // allow panning well past the right edge (extra padding)
+    .translateExtent([[margin.left - 10000, -Infinity], [width - margin.right + 10000, Infinity]])
     .on("zoom", zoomed);
 
   svg.call(zoom);
@@ -1414,6 +2092,8 @@ async function init() {
       activeTimelineId = newTimelineId;
       previousTimelineId = newTimelineId;
       await loadTimelineOptions(newTimelineId);
+      // Update URL when new timeline is created
+      setTimelineUrlParam(activeTimelineId);
       updateUIForTimelineOwner(activeTimelineId);
       // apply styles for the newly created timeline and refresh view
       applyTimelineStyles(timelineMetaMap.get(activeTimelineId));
@@ -1422,11 +2102,15 @@ async function init() {
     },
     async (renamedTimelineId) => {
       await loadTimelineOptions(renamedTimelineId);
+      // Update URL when timeline is renamed
+      setTimelineUrlParam(renamedTimelineId);
       updateUIForTimelineOwner(renamedTimelineId);
       // Immediately apply updated settings and refresh events
       applyTimelineStyles(timelineMetaMap.get(renamedTimelineId));
       eventsData = renamedTimelineId ? await loadEvents(renamedTimelineId) : [];
-      refreshChart(eventsData);
+      const transformedView = renamedTimelineId ? await loadUserTimelineView(renamedTimelineId) : null;
+      const transform = transformedView?.zoom ? d3.zoomIdentity.translate(transformedView.zoom.x || 0, 0).scale(transformedView.zoom.k || 1) : d3.zoomIdentity;
+      refreshChart(eventsData, transform);
     }
   );
 
@@ -1451,10 +2135,16 @@ async function init() {
 
       previousTimelineId = selected;
       activeTimelineId = selected;
+      
+      // Update URL when timeline is selected for bookmarking
+      setTimelineUrlParam(activeTimelineId);
+      
       updateUIForTimelineOwner(activeTimelineId);
       applyTimelineStyles(timelineMetaMap.get(activeTimelineId));
       eventsData = activeTimelineId ? await loadEvents(activeTimelineId) : [];
-      refreshChart(eventsData);
+      const initialView = activeTimelineId ? await loadUserTimelineView(activeTimelineId) : null;
+      const transform = initialView?.zoom ? d3.zoomIdentity.translate(initialView.zoom.x || 0, 0).scale(initialView.zoom.k || 1) : d3.zoomIdentity;
+      refreshChart(eventsData, transform);
     });
   }
 
@@ -1471,20 +2161,51 @@ async function init() {
   }
 
     window.addEventListener("resize", () => {
+    const leftDate = currentTransform.rescaleX(xBaseScale).invert(margin.left);
+
     width = container.clientWidth;
     height = container.clientHeight;
     axisY = height - margin.bottom;
 
     svg.attr("width", width).attr("height", height);
     xBaseScale.range([margin.left, width - margin.right]);
-    gAxis.attr("transform", `translate(0, ${axisY})`);
-    zoom.extent([[margin.left, 0], [width - margin.right, height]])
-        .translateExtent([[margin.left, -Infinity], [width - margin.right, Infinity]]);
+    // extend domain to reserve time on the right for labels
+    try {
+      const reserve = computeRightLabelReserve(eventsData);
+      const innerW = Math.max(100, width - margin.left - margin.right);
+      const domain = xBaseScale.domain();
+      const durationMs = domain[1].getTime() - domain[0].getTime();
+      const extraMs = Math.round((reserve / innerW) * Math.max(1, durationMs));
+      const extendedEnd = new Date(domain[1].getTime() + extraMs + 1000);
+      xBaseScale.domain([domain[0], extendedEnd]);
 
-    renderCurrentTimeline();
+      // loosen translateExtent so user can pan past the last event
+      const extraPan = Math.max(1000, reserve + 200);
+      zoom.extent([[margin.left, 0], [width - margin.right, height]])
+          .translateExtent([[margin.left - 10000, -Infinity], [width - margin.right + extraPan, Infinity]]);
+    } catch (err) {
+      gAxis.attr("transform", `translate(0, ${axisY})`);
+      zoom.extent([[margin.left, 0], [width - margin.right, height]])
+          .translateExtent([[margin.left - 10000, -Infinity], [width - margin.right + 10000, Infinity]]);
+    }
+    gAxis.attr("transform", `translate(0, ${axisY})`);
+
+    currentTransform = d3.zoomIdentity
+      .translate(margin.left - currentTransform.k * xBaseScale(leftDate), 0)
+      .scale(currentTransform.k);
+
+    svg.call(zoom.transform, currentTransform);
   });
 
   setupCsvImport(
+    () => activeTimelineId,
+    async () => {
+      eventsData = await loadEvents(activeTimelineId);
+      refreshChart(eventsData);
+    }
+  );
+
+  setupAiImport(
     () => activeTimelineId,
     async () => {
       eventsData = await loadEvents(activeTimelineId);
