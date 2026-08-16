@@ -28,11 +28,15 @@ function getTimelineIdFromUrl() {
 }
 
 function setTimelineUrlParam(timelineId) {
-  if (!timelineId) return;
   const params = new URLSearchParams(window.location.search);
-  params.set('timeline', timelineId);
-  const newUrl = `${window.location.pathname}?${params.toString()}`;
-  window.history.replaceState({ timelineId }, '', newUrl);
+  if (timelineId) {
+    params.set('timeline', timelineId);
+  } else {
+    params.delete('timeline');
+  }
+  const queryString = params.toString();
+  const newUrl = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname;
+  window.history.replaceState({ timelineId: timelineId || null }, '', newUrl);
 }
 
 function slugify(text) {
@@ -561,24 +565,25 @@ async function deleteTimeline(timelineId) {
     const eventsRef = collection(db, "timelines", timelineId, "events");
     const eventsSnapshot = await getDocs(eventsRef);
     
-    const batch = writeBatch(db);
-    eventsSnapshot.forEach((eventDoc) => {
-      batch.delete(eventDoc.ref);
-    });
+    // Delete events in chunks of 450 (Firestore batch limit is 500)
+    const eventDocs = eventsSnapshot.docs;
+    for (let i = 0; i < eventDocs.length; i += 450) {
+      const chunk = eventDocs.slice(i, i + 450);
+      const batch = writeBatch(db);
+      chunk.forEach(eDoc => batch.delete(eDoc.ref));
+      await batch.commit();
+    }
     
-    // Delete all user timeline views
-    const viewsRef = collection(db, "userTimelineViews");
-    const viewsQuery = getDocs(viewsRef);
-    (await viewsQuery).forEach((viewDoc) => {
-      if (viewDoc.data().timelineId === timelineId) {
-        batch.delete(viewDoc.ref);
-      }
-    });
+    // Delete user timeline view for current user if it exists
+    try {
+      await deleteDoc(doc(db, "users", auth.currentUser.uid, "timelineViews", timelineId));
+    } catch (e) {
+      // Ignore view delete error
+    }
     
     // Delete the timeline document itself
-    batch.delete(doc(db, "timelines", timelineId));
+    await deleteDoc(doc(db, "timelines", timelineId));
     
-    await batch.commit();
     console.log(`Successfully deleted timeline '${timelineId}' and all associated data`);
   } catch (error) {
     console.error(`Error deleting timeline '${timelineId}':`, error);
@@ -586,7 +591,7 @@ async function deleteTimeline(timelineId) {
   }
 }
 
-function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
+function setupTimelineModal(onTimelineCreated, onTimelineRenamed, onTimelineDeleted) {
   const modal = document.getElementById("timelineModal");
   const modalTitle = document.getElementById("timelineModalTitle");
   const form = document.getElementById("timelineForm");
@@ -692,31 +697,21 @@ function setupTimelineModal(onTimelineCreated, onTimelineRenamed) {
         `Are you sure you want to delete "${timelineName}"?\n\nThis will permanently delete the timeline and all its events. This action cannot be undone.`
       );
       
-      if (!confirmed) return;
+            if (!confirmed) return;
       
       try {
         deleteBtn.disabled = true;
         deleteBtn.textContent = "Deleting...";
         
-        await deleteTimeline(renamingTimelineId);
+        const targetTimelineId = renamingTimelineId;
+        await deleteTimeline(targetTimelineId);
         
-        // Close modal
+        // Close modal without restoring old selection
         close(false);
         
-        // Clear active timeline and events
-        activeTimelineId = null;
-        eventsData = [];
-        
-        // Reload timeline options without selecting any
-        const selectEl = document.getElementById("timelineSelect");
-        if (selectEl) {
-          selectEl.value = "";
+        if (onTimelineDeleted) {
+          await onTimelineDeleted(targetTimelineId);
         }
-        await loadTimelineOptions(null);
-        
-        // Clear UI for no timeline selected
-        updateUIForTimelineOwner(null);
-        refreshChart([]);
       } catch (err) {
         console.error("Error deleting timeline:", err);
         alert("Failed to delete timeline. Please try again.");
@@ -830,18 +825,20 @@ function updateUIForTimelineOwner(timelineId) {
   const isOwner = Boolean(currentUser && meta && meta.ownerEmail === userEmail);
 
   // Toggle buttons for adding events / CSV import / AI import / rename
-  const openAddEventBtn = document.getElementById("openAddEventBtn");
+    const openAddEventBtn = document.getElementById("openAddEventBtn");
   const openImportCsvBtn = document.getElementById("openImportCsvBtn");
   const openAiImportBtn = document.getElementById("openAiImportBtn");
   const renameTimelineBtn = document.getElementById("renameTimelineBtn");
   const shareTimelineBtn = document.getElementById("shareTimelineBtn");
+  const resetTimelineViewBtn = document.getElementById("resetTimelineViewBtn");
 
   if (openAddEventBtn) openAddEventBtn.style.display = isOwner ? "inline-block" : "none";
   if (openImportCsvBtn) openImportCsvBtn.style.display = isOwner ? "inline-block" : "none";
   if (openAiImportBtn) openAiImportBtn.style.display = isOwner ? "inline-block" : "none";
   if (renameTimelineBtn) renameTimelineBtn.style.display = isOwner ? "inline-block" : "none";
-  // Share button is visible to all users who can view this timeline
+  // Share button and Reset View button are visible when a timeline is selected
   if (shareTimelineBtn) shareTimelineBtn.style.display = timelineId ? "inline-block" : "none";
+  if (resetTimelineViewBtn) resetTimelineViewBtn.style.display = timelineId ? "inline-block" : "none";
 
   // Timeline public checkbox control
   const visibilityContainer = document.getElementById("timelineVisibilityContainer");
@@ -924,8 +921,13 @@ async function loadTimelineOptions(selectedId = null) {
   try {
     const timelinesSnapshot = await getDocs(collection(db, "timelines"));
 
-    selectEl.innerHTML = "";
+        selectEl.innerHTML = "";
     timelineMetaMap.clear();
+
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "";
+    defaultOption.textContent = "Select Timeline";
+    selectEl.appendChild(defaultOption);
 
     let firstTimelineId = null;
 
@@ -994,13 +996,12 @@ async function loadTimelineOptions(selectedId = null) {
       }
     }
 
-    if (!idToSelect) {
-      idToSelect = firstTimelineId;
-    }
-
-    if (idToSelect) {
+        if (idToSelect) {
       selectEl.value = idToSelect;
       return idToSelect;
+    } else {
+      selectEl.value = "";
+      return null;
     }
 
     return null;
@@ -2087,7 +2088,7 @@ async function init() {
     const selectEl = document.getElementById("timelineSelect");
   const renameTimelineBtn = document.getElementById("renameTimelineBtn");
 
-  const timelineModal = setupTimelineModal(
+    const timelineModal = setupTimelineModal(
     async (newTimelineId) => {
       activeTimelineId = newTimelineId;
       previousTimelineId = newTimelineId;
@@ -2111,6 +2112,20 @@ async function init() {
       const transformedView = renamedTimelineId ? await loadUserTimelineView(renamedTimelineId) : null;
       const transform = transformedView?.zoom ? d3.zoomIdentity.translate(transformedView.zoom.x || 0, 0).scale(transformedView.zoom.k || 1) : d3.zoomIdentity;
       refreshChart(eventsData, transform);
+    },
+    async () => {
+      activeTimelineId = null;
+      previousTimelineId = null;
+      eventsData = [];
+      setTimelineUrlParam(null);
+
+      await loadTimelineOptions(null);
+
+      const selectEl = document.getElementById("timelineSelect");
+      if (selectEl) selectEl.value = "";
+
+      updateUIForTimelineOwner(null);
+      refreshChart([]);
     }
   );
 
