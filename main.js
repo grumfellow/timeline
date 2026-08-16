@@ -1011,7 +1011,7 @@ async function loadTimelineOptions(selectedId = null) {
   }
 }
 
-function parseCSVLine(line) {
+function parseDelimitedLine(line, delimiter = ",") {
   const result = [];
   let current = "";
   let inQuotes = false;
@@ -1025,7 +1025,7 @@ function parseCSVLine(line) {
       } else {
         inQuotes = !inQuotes;
       }
-    } else if (char === "," && !inQuotes) {
+    } else if (char === delimiter && !inQuotes) {
       result.push(current);
       current = "";
     } else {
@@ -1037,17 +1037,25 @@ function parseCSVLine(line) {
   return result;
 }
 
+function parseCSVLine(line) {
+  return parseDelimitedLine(line, ",");
+}
+
 function parseCSV(text) {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return [];
 
-  const headers = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase());
+  // Auto-detect delimiter: tab if header contains tabs, else comma
+  const firstLine = lines[0];
+  const delimiter = firstLine.includes("\t") ? "\t" : ",";
+
+  const headers = parseDelimitedLine(lines[0], delimiter).map(h => h.trim().toLowerCase());
   const rows = [];
 
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
 
-    const values = parseCSVLine(lines[i]);
+    const values = parseDelimitedLine(lines[i], delimiter);
     const row = {};
     headers.forEach((header, idx) => {
       row[header] = values[idx]?.trim() ?? "";

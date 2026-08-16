@@ -209,8 +209,8 @@
     <button id="openAddEventBtn" style="padding: 8px 16px; font-weight: bold; cursor: pointer;">
       + Add New Event
     </button>
-    <button id="openImportCsvBtn" style="padding: 8px 16px; cursor: pointer;">
-      Import CSV
+        <button id="openImportCsvBtn" style="padding: 8px 16px; cursor: pointer;">
+      Import CSV / TSV
     </button>
     <button id="openAiImportBtn" style="padding: 8px 16px; cursor: pointer; background: #8b5cf6; color: white; border: none; border-radius: 4px;">
       Generate with AI
@@ -352,18 +352,18 @@
   </div>
 </div>
 
-<!-- CSV Import Modal -->
+<!-- CSV / TSV Import Modal -->
 <div id="csvImportModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
   <div style="background: #ffffff; color: #0f172a; padding: 24px; border-radius: 8px; width: 420px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
-    <h3 style="margin-top: 0; color: #0f172a;">Import Events from CSV</h3>
+    <h3 style="margin-top: 0; color: #0f172a;">Import Events from CSV / TSV</h3>
                 <p style="margin: 0 0 16px; color: #64748b; font-size: 14px; line-height: 1.5;">
-      Events will be added to the currently selected timeline. Expected columns: <strong>title</strong>, <strong>date</strong> (or <strong>start_date</strong>), <strong>end_date</strong> (optional), <strong>tier</strong>, <strong>tags</strong> (optional, comma-separated).
+      Events will be added to the currently selected timeline. Supports CSV and Tab-Separated (TSV/TXT) files. Expected columns: <strong>title</strong>, <strong>date</strong> (or <strong>start_date</strong>), <strong>end_date</strong> (optional), <strong>tier</strong>, <strong>tags</strong> (optional, comma-separated).
     </p>
 
     <form id="csvImportForm">
       <div style="margin-bottom: 16px;">
-        <label for="csvFileInput" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">CSV File</label>
-        <input type="file" id="csvFileInput" accept=".csv,text/csv" required style="width: 100%; box-sizing: border-box; color: #0f172a;" />
+        <label for="csvFileInput" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">CSV / TSV File</label>
+        <input type="file" id="csvFileInput" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain" required style="width: 100%; box-sizing: border-box; color: #0f172a;" />
       </div>
 
       <p id="csvImportStatus" style="display: none; margin: 0 0 16px; font-size: 14px; line-height: 1.5;"></p>
