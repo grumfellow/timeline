@@ -1815,9 +1815,7 @@ async function init() {
       // ignore if selections not ready
     }
 
-    // update DOM elements like title and tag badges
-    const titleEl = document.querySelector('h2');
-    if (titleEl) titleEl.style.fontSize = `${size + 6}px`;
+        // update DOM elements like title and tag badges
     document.querySelectorAll('.tag-badge').forEach(el => {
       el.style.fontSize = `${Math.max(10, size - 1)}px`;
     });
@@ -1834,8 +1832,7 @@ async function init() {
       }
     };
 
-    const containerEl = document.getElementById("timeline-container");
-    const titleEl = document.querySelector("h2");
+        const containerEl = document.getElementById("timeline-container");
     if (containerEl) {
       // background color as fallback
       containerEl.style.background = currentTimelineSettings.backgroundColor || DEFAULT_TIMELINE_SETTINGS.backgroundColor;
@@ -1858,8 +1855,7 @@ async function init() {
         containerEl.style.backgroundSize = '';
         containerEl.style.backgroundPosition = '';
       }
-    }
-    if (titleEl) titleEl.style.color = currentTimelineSettings.fontColor;
+        }
     // Update axis colors immediately
     try {
       gAxis.selectAll("text").style("fill", currentTimelineSettings.fontColor || DEFAULT_TIMELINE_SETTINGS.fontColor);
