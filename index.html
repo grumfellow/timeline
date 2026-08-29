@@ -8,9 +8,10 @@
     html, body {
       height: 100%;
     }
-    body {
+        body {
       font-family: system-ui, -apple-system, sans-serif;
       margin: 20px;
+      padding-bottom: 24px;
       background-color: #0f172a;
       color: #f8fafc;
       box-sizing: border-box;
@@ -169,9 +170,9 @@
 <body>
 
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
-      <div style="display: flex; align-items: baseline; gap: 8px;">
+            <div style="display: flex; align-items: baseline; gap: 8px;">
         <h2 style="margin: 0;">Chronlines 2.0</h2>
-        <span style="font-size: 11px; color: #64748b; font-weight: normal;">v2.0.2</span>
+        <span style="font-size: 11px; color: #64748b; font-weight: normal;">v2.0.3</span>
       </div>
 
     <!-- User Auth Control Bar -->
@@ -242,8 +243,8 @@
     </div>
   </div>
 
-  <!-- Font size control -->
-  <div class="font-size-control" style="margin-bottom: 16px;">
+    <!-- Font size control -->
+  <div class="font-size-control" style="margin-bottom: 24px;">
     <label for="fontSizeSlider" style="color: #94a3b8; font-size: 14px; white-space: nowrap;">Font Size:</label>
     <input id="fontSizeSlider" type="range" min="9" max="24" step="1" value="11" />
     <span id="fontSizeValue" style="color: #94a3b8; width: 40px; text-align: left;">11px</span>
