@@ -124,10 +124,20 @@ function setupAuthModal(onAuthSuccess) {
     });
   }
 
-  if (signOutBtn) {
+    if (signOutBtn) {
     signOutBtn.addEventListener("click", async () => {
       try {
         await signOut(auth);
+        // Synchronously clear the timeline dropdown menu immediately on Sign Out click
+        const selectEl = document.getElementById("timelineSelect");
+        if (selectEl) {
+          selectEl.innerHTML = "";
+          const defaultOption = document.createElement("option");
+          defaultOption.value = "";
+          defaultOption.textContent = "Select Timeline";
+          selectEl.appendChild(defaultOption);
+          selectEl.value = "";
+        }
       } catch (err) {
         console.error("Error signing out:", err);
       }
@@ -1788,16 +1798,45 @@ async function init() {
     });
   }
 
-    setupAuthModal(async (user) => {
+        // Clear all timeline options from the dropdown except "Select Timeline"
+  function clearTimelineSelectOptions() {
+    const selectEl = document.getElementById("timelineSelect");
+    if (!selectEl) return;
+    selectEl.innerHTML = "";
+    timelineMetaMap.clear();
+
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "";
+    defaultOption.textContent = "Select Timeline";
+    selectEl.appendChild(defaultOption);
+  }
+
+  setupAuthModal(async (user) => {
     if (!user) {
       // Clear URL parameter and reset active timeline when signing out
       setTimelineUrlParam(null);
       activeTimelineId = null;
-    } else {
-      // Check if timeline ID is provided in URL, use that as starting point
-      const urlTimelineId = getTimelineIdFromUrl();
-      activeTimelineId = urlTimelineId || activeTimelineId;
+      previousTimelineId = null;
+      
+      // Clear the selection list completely except for "Select Timeline"
+      clearTimelineSelectOptions();
+
+      // Load public timelines only (or leave empty if no public timelines exist)
+      await loadTimelineOptions(null);
+
+      const selectEl = document.getElementById("timelineSelect");
+      if (selectEl) selectEl.value = "";
+
+      updateUIForTimelineOwner(null);
+      applyTimelineStyles(DEFAULT_TIMELINE_SETTINGS);
+      eventsData = [];
+      refreshChart([]);
+      return;
     }
+
+    // Check if timeline ID is provided in URL, use that as starting point
+    const urlTimelineId = getTimelineIdFromUrl();
+    activeTimelineId = urlTimelineId || activeTimelineId;
     
     activeTimelineId = await loadTimelineOptions(activeTimelineId);
     previousTimelineId = activeTimelineId;
