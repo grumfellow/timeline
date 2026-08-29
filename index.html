@@ -5,33 +5,48 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Chronlines 2.0</title>
     <style>
-    html, body {
+            html, body {
       height: 100%;
+      overflow: hidden;
     }
-        body {
+    body {
       font-family: system-ui, -apple-system, sans-serif;
-      margin: 20px;
-      padding-bottom: 24px;
+      margin: 0;
+      padding: 16px 20px 20px 20px;
       background-color: #0f172a;
       color: #f8fafc;
       box-sizing: border-box;
       display: flex;
       flex-direction: column;
-      min-height: 100vh;
-      height: auto;
+      height: 100vh;
     }
 
-        #timeline-container {
-          width: 100%;
-          flex: 1 1 auto;
-          min-height: 175px;
-          height: 55vh;
-          background: #1e293b;
-          border-radius: 8px;
-          overflow: hidden;
-          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-          cursor: grab;
-        }
+    .top-header {
+      flex: 0 0 auto;
+    }
+
+    .timeline-picker {
+      flex: 0 0 auto;
+    }
+
+    #timeline-container {
+      width: 100%;
+      flex: 1 1 0px;
+      min-height: 100px;
+      background: #1e293b;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      cursor: grab;
+    }
+
+    .bottom-controls-wrapper {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 12px;
+    }
 
     .timeline-controls {
       display: flex;
@@ -53,9 +68,9 @@
       max-width: 100%;
     }
 
-    @media (max-width: 768px) {
+        @media (max-width: 768px) {
       body {
-        margin: 12px;
+        padding: 12px;
       }
 
       .timeline-picker,
@@ -83,10 +98,9 @@
         gap: 8px;
       }
 
-            #timeline-container {
-              height: 55vh;
-              min-height: 150px;
-            }
+      #timeline-container {
+        min-height: 100px;
+      }
 
       #timelineSelect,
       #keywordFilterInput,
@@ -170,10 +184,10 @@
 <body>
 
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
-            <div style="display: flex; align-items: baseline; gap: 8px;">
-              <h2 style="margin: 0;">Chronlines 2.0</h2>
-              <span style="font-size: 11px; color: #64748b; font-weight: normal;">v2.0.6</span>
-            </div>
+                  <div style="display: flex; align-items: baseline; gap: 8px;">
+        <h2 style="margin: 0;">Chronlines 2.0</h2>
+        <span style="font-size: 11px; color: #64748b; font-weight: normal;">v2.0.7</span>
+      </div>
 
     <!-- User Auth Control Bar -->
     <div id="authContainer" style="display: flex; align-items: center; gap: 10px;">
@@ -209,8 +223,8 @@
 
   <div id="timeline-container"></div>
 
-    <!-- Event Creation Controls -->
-  <div class="timeline-controls" style="margin: 15px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <!-- Event Creation Controls -->
+    <div class="timeline-controls" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
     <button id="openAddEventBtn" style="padding: 8px 16px; font-weight: bold; cursor: pointer;">
       + Add New Event
     </button>
@@ -243,8 +257,8 @@
     </div>
   </div>
 
-    <!-- Font size control -->
-  <div class="font-size-control" style="margin-bottom: 24px;">
+        <!-- Font size control -->
+    <div class="font-size-control">
     <label for="fontSizeSlider" style="color: #94a3b8; font-size: 14px; white-space: nowrap;">Font Size:</label>
     <input id="fontSizeSlider" type="range" min="9" max="24" step="1" value="11" />
     <span id="fontSizeValue" style="color: #94a3b8; width: 40px; text-align: left;">11px</span>
