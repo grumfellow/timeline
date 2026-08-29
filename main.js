@@ -1788,18 +1788,22 @@ async function init() {
     });
   }
 
-  setupAuthModal(async (user) => {
-    // Check if timeline ID is provided in URL, use that as starting point
-    const urlTimelineId = getTimelineIdFromUrl();
-    activeTimelineId = urlTimelineId || activeTimelineId;
+    setupAuthModal(async (user) => {
+    if (!user) {
+      // Clear URL parameter and reset active timeline when signing out
+      setTimelineUrlParam(null);
+      activeTimelineId = null;
+    } else {
+      // Check if timeline ID is provided in URL, use that as starting point
+      const urlTimelineId = getTimelineIdFromUrl();
+      activeTimelineId = urlTimelineId || activeTimelineId;
+    }
     
     activeTimelineId = await loadTimelineOptions(activeTimelineId);
     previousTimelineId = activeTimelineId;
     
     // Update URL with the selected timeline
-    if (activeTimelineId) {
-      setTimelineUrlParam(activeTimelineId);
-    }
+    setTimelineUrlParam(activeTimelineId);
     
     updateUIForTimelineOwner(activeTimelineId);
     applyTimelineStyles(timelineMetaMap.get(activeTimelineId));
