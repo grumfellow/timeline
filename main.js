@@ -2013,10 +2013,17 @@ async function init() {
     updateTimeline(currentScale, currentTransform.k, filtered);
   }
 
-  function refreshChart(data, initialTransform = null) {
+    function refreshChart(data, initialTransform = null) {
     selectedTags.clear();
     renderTagBadges();
     applyTimelineStyles(timelineMetaMap.get(activeTimelineId));
+
+    // Recalculate container dimensions & axis position dynamically
+    width = container.clientWidth || width;
+    height = container.clientHeight || height;
+    axisY = height - margin.bottom;
+    svg.attr("width", width).attr("height", height);
+    if (gAxis) gAxis.attr("transform", `translate(0, ${axisY})`);
 
     const extent = d3.extent(data, d => d.date);
     if (extent[0] && extent[1]) {
@@ -2237,42 +2244,43 @@ async function init() {
     openEditEventModal = eventModal.openEdit;
   }
 
-    window.addEventListener("resize", () => {
-    const leftDate = currentTransform.rescaleX(xBaseScale).invert(margin.left);
+        const resizeObserver = new ResizeObserver(() => {
+      const leftDate = currentTransform.rescaleX(xBaseScale).invert(margin.left);
 
-    width = container.clientWidth;
-    height = container.clientHeight;
-    axisY = height - margin.bottom;
+      width = container.clientWidth;
+      height = container.clientHeight;
+      axisY = height - margin.bottom;
 
-    svg.attr("width", width).attr("height", height);
-    xBaseScale.range([margin.left, width - margin.right]);
-    // extend domain to reserve time on the right for labels
-    try {
-      const reserve = computeRightLabelReserve(eventsData);
-      const innerW = Math.max(100, width - margin.left - margin.right);
-      const domain = xBaseScale.domain();
-      const durationMs = domain[1].getTime() - domain[0].getTime();
-      const extraMs = Math.round((reserve / innerW) * Math.max(1, durationMs));
-      const extendedEnd = new Date(domain[1].getTime() + extraMs + 1000);
-      xBaseScale.domain([domain[0], extendedEnd]);
+      svg.attr("width", width).attr("height", height);
+      xBaseScale.range([margin.left, width - margin.right]);
+      // extend domain to reserve time on the right for labels
+      try {
+        const reserve = computeRightLabelReserve(eventsData);
+        const innerW = Math.max(100, width - margin.left - margin.right);
+        const domain = xBaseScale.domain();
+        const durationMs = domain[1].getTime() - domain[0].getTime();
+        const extraMs = Math.round((reserve / innerW) * Math.max(1, durationMs));
+        const extendedEnd = new Date(domain[1].getTime() + extraMs + 1000);
+        xBaseScale.domain([domain[0], extendedEnd]);
 
-      // loosen translateExtent so user can pan past the last event
-      const extraPan = Math.max(1000, reserve + 200);
-      zoom.extent([[margin.left, 0], [width - margin.right, height]])
-          .translateExtent([[margin.left - 10000, -Infinity], [width - margin.right + extraPan, Infinity]]);
-    } catch (err) {
+        // loosen translateExtent so user can pan past the last event
+        const extraPan = Math.max(1000, reserve + 200);
+        zoom.extent([[margin.left, 0], [width - margin.right, height]])
+            .translateExtent([[margin.left - 10000, -Infinity], [width - margin.right + extraPan, Infinity]]);
+      } catch (err) {
+        gAxis.attr("transform", `translate(0, ${axisY})`);
+        zoom.extent([[margin.left, 0], [width - margin.right, height]])
+            .translateExtent([[margin.left - 10000, -Infinity], [width - margin.right + 10000, Infinity]]);
+      }
       gAxis.attr("transform", `translate(0, ${axisY})`);
-      zoom.extent([[margin.left, 0], [width - margin.right, height]])
-          .translateExtent([[margin.left - 10000, -Infinity], [width - margin.right + 10000, Infinity]]);
-    }
-    gAxis.attr("transform", `translate(0, ${axisY})`);
 
-    currentTransform = d3.zoomIdentity
-      .translate(margin.left - currentTransform.k * xBaseScale(leftDate), 0)
-      .scale(currentTransform.k);
+      currentTransform = d3.zoomIdentity
+        .translate(margin.left - currentTransform.k * xBaseScale(leftDate), 0)
+        .scale(currentTransform.k);
 
-    svg.call(zoom.transform, currentTransform);
-  });
+      svg.call(zoom.transform, currentTransform);
+    });
+    resizeObserver.observe(container);
 
   setupCsvImport(
     () => activeTimelineId,
