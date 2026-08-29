@@ -1647,7 +1647,18 @@ User request: ${prompt}`
 const container = document.getElementById("timeline-container");
 let width = container.clientWidth;
 let height = container.clientHeight;
-const margin = { top: 40, right: 40, bottom: 60, left: 40 };
+
+function getDynamicMarginBottom() {
+  const size = Number(currentFontSize) || 11;
+  return Math.max(60, size + 45);
+}
+
+const margin = {
+  top: 40,
+  right: 40,
+  get bottom() { return getDynamicMarginBottom(); },
+  left: 40
+};
 
 const svg = d3.select("#timeline-container")
   .append("svg")
@@ -1853,10 +1864,14 @@ async function init() {
     refreshChart(eventsData, transform);
   });
 
-  function applyFontSize() {
+    function applyFontSize() {
     const size = Number(currentFontSize) || 11;
     // update canvas measurement font
     ctx.font = `500 ${size}px system-ui, -apple-system, sans-serif`;
+
+    // update axis Y position to account for font size margin changes
+    axisY = height - margin.bottom;
+    if (gAxis) gAxis.attr("transform", `translate(0, ${axisY})`);
 
     // update axis and event label sizes
     try {
