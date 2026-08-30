@@ -1117,6 +1117,16 @@ function parseEventDate(dateStr) {
   return isNaN(dateObj.getTime()) ? null : dateObj;
 }
 
+function toFirestoreDateField(dateObj) {
+  if (!dateObj || !(dateObj instanceof Date) || isNaN(dateObj.getTime())) return null;
+  const seconds = Math.floor(dateObj.getTime() / 1000);
+  // Firestore Timestamp valid bounds: -62135596800 (0001-01-01T00:00:00Z) to 253402300799 (9999-12-31T23:59:59Z)
+  if (seconds < -62135596800 || seconds > 253402300799) {
+    return dateObj.toISOString();
+  }
+  return Timestamp.fromDate(dateObj);
+}
+
 function getNormalizedEventKey(title, dateObj) {
   if (!title || !dateObj || Number.isNaN(dateObj.getTime())) return null;
   const normalizedTitle = String(title).trim().toLowerCase();
@@ -1192,19 +1202,20 @@ async function importEventsToTimeline(timelineId, rows) {
     const batch = writeBatch(db);
     const chunk = validEvents.slice(i, i + BATCH_SIZE);
 
-    for (const event of chunk) {
-      const eventRef = doc(collection(db, "timelines", timelineId, "events"));
-      const docData = {
-        title: event.title,
-        date: Timestamp.fromDate(event.date),
-        tier: event.tier,
-        tags: event.tags || []
-      };
-      if (event.endDate) {
-        docData.endDate = Timestamp.fromDate(event.endDate);
-      }
-      batch.set(eventRef, docData);
-    }
+        for (const event of chunk) {
+          const eventRef = doc(collection(db, "timelines", timelineId, "events"));
+
+          const docData = {
+            title: event.title,
+            date: toFirestoreDateField(event.date),
+            tier: event.tier,
+            tags: event.tags || []
+          };
+          if (event.endDate) {
+            docData.endDate = toFirestoreDateField(event.endDate);
+          }
+          batch.set(eventRef, docData);
+        }
 
     await batch.commit();
     results.imported += chunk.length;
@@ -1612,8 +1623,26 @@ User request: ${prompt}`
         throw new Error(`Gemini API request failed (${response.status}): ${detail}`);
       }
 
-      const data = await response.json();
+            const data = await response.json();
+      console.log("[AI Generation] Raw Gemini response data:", data);
       const rows = parseGeminiGeneratedEvents(data);
+      console.log("[AI Generation] Parsed event rows:", rows);
+
+      rows.forEach((row, idx) => {
+        const parsedDate = parseEventDate(row.date || row.start_date);
+        const parsedEndDate = parseEventDate(row.end_date || row.endDate);
+        console.log(`[AI Generation] Event #${idx + 1}: "${row.title}"`, {
+          rawDate: row.date || row.start_date,
+          parsedDate,
+          parsedDateTimeMs: parsedDate?.getTime ? parsedDate.getTime() : null,
+          parsedDateISO: parsedDate?.toISOString ? parsedDate.toISOString() : null,
+          rawEndDate: row.end_date || row.endDate,
+          parsedEndDate,
+          parsedEndDateTimeMs: parsedEndDate?.getTime ? parsedEndDate.getTime() : null,
+          parsedEndDateISO: parsedEndDate?.toISOString ? parsedEndDate.toISOString() : null
+        });
+      });
+
       const results = await importEventsToTimeline(activeTimelineId, rows);
 
       let message = `Generated and imported ${results.imported} event${results.imported === 1 ? "" : "s"}.`;
