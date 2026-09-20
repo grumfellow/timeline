@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "timeline": {
+      "command": "node",
+      "args": ["mcp/server.mjs"]
+    }
+  }
+}
