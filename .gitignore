@@ -4,3 +4,4 @@ dist/
 *.local
 .env
 mcp/.env.local
+*-debug.log

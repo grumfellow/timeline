@@ -1,7 +1,7 @@
 import * as d3 from 'd3';
 import { db, auth, storage } from './firebase.js';
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, writeBatch, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, writeBatch, query, where, Timestamp } from 'firebase/firestore';
 import { 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword, 
@@ -920,6 +920,23 @@ let currentTransform = d3.zoomIdentity;
 let zoomSaveTimeout = null;
 let lastSavedView = null;
 
+// Firestore security rules only allow reading timelines that are public or owned by the
+// signed-in user, and rules can't quietly filter a broad query. So ask for those two
+// sets explicitly and merge them (sorted by id, as an unfiltered read would be).
+async function fetchVisibleTimelineDocs(userEmail) {
+  const timelinesRef = collection(db, "timelines");
+  const requests = [getDocs(query(timelinesRef, where("isPublic", "==", true)))];
+  if (userEmail) {
+    requests.push(getDocs(query(timelinesRef, where("ownerEmail", "==", userEmail))));
+  }
+
+  const byId = new Map();
+  (await Promise.all(requests)).forEach((snapshot) => {
+    snapshot.forEach((docSnap) => byId.set(docSnap.id, docSnap));
+  });
+  return Array.from(byId.values()).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
 // Fetch all timeline documents from Firestore and populate the dropdown based on user permissions
 async function loadTimelineOptions(selectedId = null) {
   const selectEl = document.getElementById("timelineSelect");
@@ -929,7 +946,7 @@ async function loadTimelineOptions(selectedId = null) {
   const userEmail = currentUser ? currentUser.email : null;
 
   try {
-    const timelinesSnapshot = await getDocs(collection(db, "timelines"));
+    const timelinesSnapshot = await fetchVisibleTimelineDocs(userEmail);
 
         selectEl.innerHTML = "";
     timelineMetaMap.clear();

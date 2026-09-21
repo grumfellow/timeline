@@ -1,0 +1,27 @@
+rules_version = '2';
+
+// Timeline background images live at timeline-backgrounds/{timelineId}/{file}.
+//   - Anyone can read them (the app shows them by URL).
+//   - Only the owner of that timeline can upload or delete them, and uploads must be
+//     images under 10 MB.
+//   - Everything else in the bucket is denied.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isTimelineOwner(timelineId) {
+      return request.auth != null
+          && firestore.get(/databases/(default)/documents/timelines/$(timelineId)).data.ownerEmail
+             == request.auth.token.email;
+    }
+
+    match /timeline-backgrounds/{timelineId}/{fileName} {
+      allow read: if true;
+
+      allow create, update: if isTimelineOwner(timelineId)
+                            && request.resource.contentType.matches('image/.*')
+                            && request.resource.size < 10 * 1024 * 1024;
+
+      allow delete: if isTimelineOwner(timelineId);
+    }
+  }
+}

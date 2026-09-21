@@ -20,6 +20,8 @@ import {
   updateDoc,
   deleteDoc,
   doc,
+  query,
+  where,
   setLogLevel
 } from "firebase/firestore";
 
@@ -137,17 +139,25 @@ function fmt(d) {
 
 const norm = (s) => String(s).replace(/[‘’]/g, "'").trim().toLowerCase();
 
-async function loadTimelines() {
-  const snap = await getDocs(collection(db, "timelines"));
-  return snap.docs.map((d) => {
+// Security rules only allow reading timelines that are public or owned by the signed-in
+// user, so ask for those two sets explicitly instead of reading the whole collection.
+async function loadTimelines(user) {
+  const ref = collection(db, "timelines");
+  const [publicSnap, ownedSnap] = await Promise.all([
+    getDocs(query(ref, where("isPublic", "==", true))),
+    getDocs(query(ref, where("ownerEmail", "==", user.email)))
+  ]);
+  const byId = new Map();
+  for (const d of [...publicSnap.docs, ...ownedSnap.docs]) {
     const data = d.data();
-    return {
+    byId.set(d.id, {
       id: d.id,
       title: data.title || d.id,
       ownerEmail: data.ownerEmail || null,
       isPublic: data.isPublic === true
-    };
-  });
+    });
+  }
+  return [...byId.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 const isOwner = (tl, user) =>
@@ -156,7 +166,7 @@ const isOwner = (tl, user) =>
 // Finds a timeline by exact id or by title (case-insensitive, curly quotes ok).
 async function resolveTimeline(ref, { requireOwner }) {
   const user = await ensureSignedIn();
-  const all = await loadTimelines();
+  const all = await loadTimelines(user);
   const visible = all.filter((t) => t.isPublic || isOwner(t, user));
   const wanted = norm(ref);
   const matches = visible.filter((t) => t.id === ref || norm(t.title) === wanted);
@@ -229,7 +239,7 @@ server.registerTool(
   },
   respond(async () => {
     const user = await ensureSignedIn();
-    const all = await loadTimelines();
+    const all = await loadTimelines(user);
     return all
       .filter((t) => t.isPublic || isOwner(t, user))
       .map((t) => ({ id: t.id, title: t.title, writable: isOwner(t, user), public: t.isPublic }));
@@ -383,4 +393,6 @@ server.registerTool(
 );
 
 await server.connect(new StdioServerTransport());
+// Exit when the host closes our input, so no orphaned process is left holding the database open.
+process.stdin.on("end", () => process.exit(0));
 console.error("Timeline MCP server ready.");

@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "predeploy": "npm run build",
-    "deploy": "node node_modules/firebase-tools/lib/bin/cli.js deploy --only hosting"
+    "deploy": "node node_modules/firebase-tools/lib/bin/firebase.js deploy --only hosting"
   },
   "keywords": [],
   "author": "",

@@ -1,0 +1,53 @@
+rules_version = '2';
+
+// Access model:
+//   - A timeline is readable if it is public, or if the signed-in user owns it.
+//   - Only the owner (ownerEmail == the signed-in user's email) can change or delete a
+//     timeline or anything inside it. Nobody can create a timeline owned by someone else.
+//   - Events follow their parent timeline.
+//   - Each user can only touch their own saved views under users/{uid}.
+//   - Everything else is denied.
+//
+// The app and the MCP server must query timelines with
+//   where("isPublic", "==", true)  and  where("ownerEmail", "==", <user email>)
+// because rules cannot silently filter a broad "read everything" query.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwnerEmail(email) {
+      return signedIn() && email == request.auth.token.email;
+    }
+
+    function parentTimeline(timelineId) {
+      return get(/databases/$(database)/documents/timelines/$(timelineId)).data;
+    }
+
+    match /timelines/{timelineId} {
+      allow read: if resource.data.isPublic == true
+                  || isOwnerEmail(resource.data.ownerEmail);
+
+      allow create: if isOwnerEmail(request.resource.data.ownerEmail);
+
+      // The owner can edit, but cannot hand the timeline to someone else.
+      allow update: if isOwnerEmail(resource.data.ownerEmail)
+                    && request.resource.data.ownerEmail == resource.data.ownerEmail;
+
+      allow delete: if isOwnerEmail(resource.data.ownerEmail);
+
+      match /events/{eventId} {
+        allow read: if parentTimeline(timelineId).get('isPublic', false) == true
+                    || isOwnerEmail(parentTimeline(timelineId).ownerEmail);
+
+        allow write: if isOwnerEmail(parentTimeline(timelineId).ownerEmail);
+      }
+    }
+
+    match /users/{userId}/{document=**} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+  }
+}

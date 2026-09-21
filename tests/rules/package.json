@@ -1,0 +1,15 @@
+﻿{
+  "name": "timeline-rules-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tests for firestore.rules and storage.rules, run against the local Firebase emulator",
+  "type": "module",
+  "scripts": {
+    "test": "cd ../.. && node node_modules/firebase-tools/lib/bin/firebase.js emulators:exec --only firestore,storage --project demo-timeline \"node --test tests/rules/rules.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase": "^12.19.0"
+  }
+}
+
