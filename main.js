@@ -1455,47 +1455,39 @@ function setupCsvImport(getCurrentTimelineId, onImportComplete) {
   });
 }
 
-const GEMINI_API_KEY_STORAGE_KEY = "timelineGeminiApiKey";
-const GEMINI_MODEL_STORAGE_KEY = "timelineGeminiModel";
-const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
+const CLAUDE_MODEL_STORAGE_KEY = "timelineClaudeModel";
+const DEFAULT_CLAUDE_MODEL = "claude-sonnet-5";
 
-function getSavedGeminiApiKey() {
+// Reads the Anthropic key from Settings (users/{uid}/settings/apiKeys.anthropic) --
+// the same doc the Settings modal and the timeline-mcp server's generate_events use.
+async function getSavedAnthropicApiKey() {
+  if (!auth.currentUser) return "";
   try {
-    return localStorage.getItem(GEMINI_API_KEY_STORAGE_KEY) || "";
+    const snap = await getDoc(doc(db, "users", auth.currentUser.uid, "settings", "apiKeys"));
+    const key = snap.exists() ? snap.data().anthropic : "";
+    return key && key.trim() ? key.trim() : "";
   } catch (error) {
-    console.warn("Unable to read saved Gemini API key:", error);
+    console.warn("Unable to read saved Anthropic API key:", error);
     return "";
   }
 }
 
-function setSavedGeminiApiKey(apiKey) {
+// Model choice isn't sensitive, so it's fine to remember locally per browser.
+function getSavedClaudeModel() {
   try {
-    if (!apiKey) {
-      localStorage.removeItem(GEMINI_API_KEY_STORAGE_KEY);
-      return;
-    }
-    localStorage.setItem(GEMINI_API_KEY_STORAGE_KEY, apiKey.trim());
+    const stored = localStorage.getItem(CLAUDE_MODEL_STORAGE_KEY);
+    return stored && stored.trim() ? stored.trim() : DEFAULT_CLAUDE_MODEL;
   } catch (error) {
-    console.warn("Unable to save Gemini API key:", error);
+    console.warn("Unable to read saved Claude model:", error);
+    return DEFAULT_CLAUDE_MODEL;
   }
 }
 
-function getSavedGeminiModel() {
+function setSavedClaudeModel(model) {
   try {
-    const stored = localStorage.getItem(GEMINI_MODEL_STORAGE_KEY);
-    return stored && stored.trim() ? stored.trim() : DEFAULT_GEMINI_MODEL;
+    localStorage.setItem(CLAUDE_MODEL_STORAGE_KEY, (model || DEFAULT_CLAUDE_MODEL).trim());
   } catch (error) {
-    console.warn("Unable to read saved Gemini model:", error);
-    return DEFAULT_GEMINI_MODEL;
-  }
-}
-
-function setSavedGeminiModel(model) {
-  try {
-    const normalized = (model || DEFAULT_GEMINI_MODEL).trim();
-    localStorage.setItem(GEMINI_MODEL_STORAGE_KEY, normalized);
-  } catch (error) {
-    console.warn("Unable to save Gemini model:", error);
+    console.warn("Unable to save Claude model:", error);
   }
 }
 
@@ -1534,51 +1526,90 @@ function normalizeAiEventRow(rawRow) {
   return normalized;
 }
 
-function parseGeminiGeneratedEvents(apiResponse) {
-  const contentText = apiResponse?.candidates?.[0]?.content?.parts
-    ?.map((part) => part?.text || "")
-    .join("\n")
-    .trim();
+// Same tool definition and forced tool_choice the timeline-mcp server's generate_events
+// uses, so both paths get reliable structured JSON instead of parsed prose.
+const RECORD_EVENTS_TOOL = {
+  name: "record_events",
+  description: "Record the generated timeline events.",
+  input_schema: {
+    type: "object",
+    properties: {
+      events: {
+        type: "array",
+        description: "The generated events, in chronological order.",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Concise event title" },
+            start_date: {
+              type: "string",
+              description:
+                'Date the event happened: "M/D/YYYY", "YYYY-MM-DD", or a bare year like "1975" or "44 BC" ' +
+                "when only the year is known"
+            },
+            end_date: {
+              type: "string",
+              description: "Only set for events spanning more than one day, same format as start_date"
+            },
+            tier: {
+              type: "integer",
+              enum: [1, 2, 3],
+              description: "Importance: 1 = major/well-known, 2 = notable, 3 = minor detail"
+            },
+            tags: { type: "array", items: { type: "string" }, description: "1-3 short lowercase tags" }
+          },
+          required: ["title", "start_date", "tier"]
+        }
+      }
+    },
+    required: ["events"]
+  }
+};
 
-  if (!contentText) {
-    throw new Error("Gemini did not return any generated content.");
+// Calls the Anthropic API directly from the browser. Requires the
+// anthropic-dangerous-direct-browser-access header -- without it Anthropic blocks
+// cross-origin requests from a page, since API keys aren't meant to sit in client code.
+async function generateEventsWithClaude(apiKey, model, prompt) {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 4096,
+      system:
+        "You are a meticulous historical researcher helping build a timeline visualization. Given a request, " +
+        "generate factually accurate events with real dates. Never invent an event or a date you aren't confident " +
+        "about. Prefer a specific day over a bare year when the day is well documented.",
+      messages: [
+        { role: "user", content: `${prompt}\n\nCall record_events with the result, ordered chronologically.` }
+      ],
+      tools: [RECORD_EVENTS_TOOL],
+      tool_choice: { type: "tool", name: "record_events" }
+    })
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    if (response.status === 401) throw new Error("Anthropic rejected that API key. Check it in Settings.");
+    throw new Error(`Anthropic API request failed (${response.status}): ${detail}`);
   }
 
-  let parsed;
-  try {
-    parsed = JSON.parse(contentText);
-  } catch (error) {
-    const codeFenceMatch = contentText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-    const fallbackText = codeFenceMatch ? codeFenceMatch[1] : contentText.replace(/^[^\[]+/, "").replace(/[^\]]+$/, "");
-    try {
-      parsed = JSON.parse(fallbackText);
-    } catch (fallbackError) {
-      throw new Error("Gemini output was not valid JSON. Please adjust the prompt to request an array of events.");
-    }
+  const data = await response.json();
+  const toolUse = (data.content || []).find((block) => block.type === "tool_use" && block.name === "record_events");
+  const events = toolUse?.input?.events;
+  if (!Array.isArray(events) || events.length === 0) {
+    throw new Error("Claude did not return any generated events. Try again, or rephrase the prompt.");
   }
 
-  const eventArray = Array.isArray(parsed)
-    ? parsed
-    : Array.isArray(parsed?.events)
-      ? parsed.events
-      : Array.isArray(parsed?.data)
-        ? parsed.data
-        : Array.isArray(parsed?.items)
-          ? parsed.items
-          : null;
-
-  if (!eventArray) {
-    throw new Error("Gemini output did not include a valid event array.");
-  }
-
-  const rows = eventArray
-    .map((item) => normalizeAiEventRow(item))
-    .filter(Boolean);
-
+  const rows = events.map((item) => normalizeAiEventRow(item)).filter(Boolean);
   if (!rows.length) {
-    throw new Error("Gemini returned no usable events. Please refine the prompt.");
+    throw new Error("Claude returned no usable events. Please refine the prompt.");
   }
-
   return rows;
 }
 
@@ -1587,23 +1618,18 @@ function setupAiImport(getCurrentTimelineId, onImportComplete) {
   const modal = document.getElementById("aiImportModal");
   const form = document.getElementById("aiImportForm");
   const cancelBtn = document.getElementById("cancelAiImportBtn");
-  const apiKeyInput = document.getElementById("geminiApiKeyInput");
-  const modelInput = document.getElementById("geminiModelInput");
+  const modelInput = document.getElementById("claudeModelInput");
   const promptInput = document.getElementById("aiPromptInput");
   const statusEl = document.getElementById("aiImportStatus");
   const importBtn = document.getElementById("aiImportBtn");
-  const saveApiKeyBtn = document.getElementById("saveGeminiApiKeyBtn");
+  const noKeyNotice = document.getElementById("aiImportNoKeyNotice");
+  const openSettingsFromAiBtn = document.getElementById("aiImportOpenSettingsBtn");
 
-  if (!openBtn || !modal || !form || !apiKeyInput || !modelInput || !promptInput) return;
-
-  apiKeyInput.value = getSavedGeminiApiKey();
-  modelInput.value = getSavedGeminiModel();
+  if (!openBtn || !modal || !form || !modelInput || !promptInput) return;
 
   function closeModal() {
     modal.style.display = "none";
     form.reset();
-    apiKeyInput.value = getSavedGeminiApiKey();
-    modelInput.value = getSavedGeminiModel();
     if (statusEl) {
       statusEl.style.display = "none";
       statusEl.textContent = "";
@@ -1611,42 +1637,30 @@ function setupAiImport(getCurrentTimelineId, onImportComplete) {
     if (importBtn) importBtn.disabled = false;
   }
 
-  function openModal() {
-    apiKeyInput.value = getSavedGeminiApiKey();
-    modelInput.value = getSavedGeminiModel();
+  async function openModal() {
     form.reset();
-    apiKeyInput.value = getSavedGeminiApiKey();
-    modelInput.value = getSavedGeminiModel();
+    modelInput.value = getSavedClaudeModel();
     if (statusEl) {
       statusEl.style.display = "none";
       statusEl.textContent = "";
     }
     if (importBtn) importBtn.disabled = false;
     modal.style.display = "flex";
+
+    const hasKey = Boolean(await getSavedAnthropicApiKey());
+    if (noKeyNotice) noKeyNotice.style.display = hasKey ? "none" : "block";
+    if (importBtn) importBtn.disabled = !hasKey;
   }
 
-  if (saveApiKeyBtn) {
-    saveApiKeyBtn.addEventListener("click", () => {
-      const key = apiKeyInput.value.trim();
-      if (!key) {
-        if (statusEl) {
-          statusEl.style.display = "block";
-          statusEl.style.color = "#b45309";
-          statusEl.textContent = "Enter an API key before saving it.";
-        }
-        return;
-      }
-      setSavedGeminiApiKey(key);
-      if (statusEl) {
-        statusEl.style.display = "block";
-        statusEl.style.color = "#15803d";
-        statusEl.textContent = "Gemini API key saved locally for future imports.";
-      }
+  if (openSettingsFromAiBtn) {
+    openSettingsFromAiBtn.addEventListener("click", () => {
+      closeModal();
+      document.getElementById("openSettingsBtn")?.click();
     });
   }
 
-  openBtn.addEventListener("click", () => {
-    openModal();
+  openBtn.addEventListener("click", async () => {
+    await openModal();
     if (!getCurrentTimelineId() && statusEl) {
       statusEl.style.display = "block";
       statusEl.style.color = "#b45309";
@@ -1669,18 +1683,19 @@ function setupAiImport(getCurrentTimelineId, onImportComplete) {
       return;
     }
 
-    const apiKey = apiKeyInput.value.trim();
+    const apiKey = await getSavedAnthropicApiKey();
     if (!apiKey) {
+      if (noKeyNotice) noKeyNotice.style.display = "block";
       if (statusEl) {
         statusEl.style.display = "block";
         statusEl.style.color = "#b45309";
-        statusEl.textContent = "Please enter your Gemini API key first.";
+        statusEl.textContent = "Save an Anthropic API key in Settings first.";
       }
       return;
     }
 
-    const modelName = (modelInput.value || DEFAULT_GEMINI_MODEL).trim() || DEFAULT_GEMINI_MODEL;
-    setSavedGeminiModel(modelName);
+    const modelName = (modelInput.value || DEFAULT_CLAUDE_MODEL).trim() || DEFAULT_CLAUDE_MODEL;
+    setSavedClaudeModel(modelName);
 
     const prompt = promptInput.value.trim();
     if (!prompt) {
@@ -1692,72 +1707,15 @@ function setupAiImport(getCurrentTimelineId, onImportComplete) {
       return;
     }
 
-    setSavedGeminiApiKey(apiKey);
-
     if (importBtn) importBtn.disabled = true;
     if (statusEl) {
       statusEl.style.display = "block";
       statusEl.style.color = "#334155";
-      statusEl.textContent = "Generating events with Gemini...";
+      statusEl.textContent = "Generating events with Claude...";
     }
 
     try {
-      const requestBody = {
-        contents: [{
-          role: "user",
-          parts: [{
-            text: `You are a historical timeline event generator. Generate a JSON array of events matching the user's request. 
-Return only valid JSON, no markdown fences, no explanatory text.
-Each item must have these exact fields: 
-- title: string
-- date: string in a supported format such as YYYY-MM-DD, YYYY, or YYYY BC
-- end_date: optional string if it spans a range
-- tier: integer from 1 to 3
-- tags: array of strings
-Rules:
-- Keep dates realistic and usable by the timeline app.
-- Use title strings only, not bullets or extra narration.
-- Ensure each object is valid JSON.
-- If the user request is broad, pick a set of meaningful events rather than a huge list.
-- Prefer 5 to 25 events unless the request is explicit.
-User request: ${prompt}`
-          }]
-        }]
-      };
-
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(`Gemini API request failed (${response.status}): ${detail}`);
-      }
-
-            const data = await response.json();
-      console.log("[AI Generation] Raw Gemini response data:", data);
-      const rows = parseGeminiGeneratedEvents(data);
-      console.log("[AI Generation] Parsed event rows:", rows);
-
-      rows.forEach((row, idx) => {
-        const parsedDate = parseEventDate(row.date || row.start_date);
-        const parsedEndDate = parseEventDate(row.end_date || row.endDate);
-        console.log(`[AI Generation] Event #${idx + 1}: "${row.title}"`, {
-          rawDate: row.date || row.start_date,
-          parsedDate,
-          parsedDateTimeMs: parsedDate?.getTime ? parsedDate.getTime() : null,
-          parsedDateISO: parsedDate?.toISOString ? parsedDate.toISOString() : null,
-          rawEndDate: row.end_date || row.endDate,
-          parsedEndDate,
-          parsedEndDateTimeMs: parsedEndDate?.getTime ? parsedEndDate.getTime() : null,
-          parsedEndDateISO: parsedEndDate?.toISOString ? parsedEndDate.toISOString() : null
-        });
-      });
-
+      const rows = await generateEventsWithClaude(apiKey, modelName, prompt);
       const results = await importEventsToTimeline(activeTimelineId, rows);
 
       let message = `Generated and imported ${results.imported} event${results.imported === 1 ? "" : "s"}.`;
@@ -1780,7 +1738,7 @@ User request: ${prompt}`
       console.error("AI event generation failed:", err);
       if (statusEl) {
         statusEl.style.color = "#b45309";
-        statusEl.textContent = err.message || "Failed to generate events with Gemini.";
+        statusEl.textContent = err.message || "Failed to generate events with Claude.";
       }
     } finally {
       if (importBtn) importBtn.disabled = false;

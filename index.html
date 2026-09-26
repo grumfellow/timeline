@@ -412,23 +412,21 @@
 <!-- AI Event Generation Modal -->
 <div id="aiImportModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
   <div style="background: #ffffff; color: #0f172a; padding: 24px; border-radius: 8px; width: 520px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
-    <h3 style="margin-top: 0; color: #0f172a;">Generate Timeline Events with Gemini</h3>
+    <h3 style="margin-top: 0; color: #0f172a;">Generate Timeline Events with AI</h3>
     <p style="margin: 0 0 16px; color: #64748b; font-size: 14px; line-height: 1.5;">
-      Use your own Gemini AI Studio API key to generate events for the currently selected timeline. Only the owner can use this feature.
+      Uses the Anthropic API key saved in your account Settings to generate events for the currently selected
+      timeline. Only the owner can use this feature.
     </p>
+
+    <div id="aiImportNoKeyNotice" style="display: none; margin: 0 0 16px; padding: 10px 12px; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 4px; font-size: 13px; color: #92400e;">
+      No Anthropic API key saved yet.
+      <button type="button" id="aiImportOpenSettingsBtn" style="padding: 2px 8px; margin-left: 4px; cursor: pointer; background: #92400e; color: white; border: none; border-radius: 4px; font-size: 12px;">Open Settings</button>
+    </div>
 
     <form id="aiImportForm">
       <div style="margin-bottom: 12px;">
-        <label for="geminiApiKeyInput" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">Gemini API Key</label>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <input type="password" id="geminiApiKeyInput" placeholder="Paste Gemini API key" style="flex: 1; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; color: #0f172a;" />
-          <button type="button" id="saveGeminiApiKeyBtn" style="padding: 8px 12px; cursor: pointer;">Save</button>
-        </div>
-      </div>
-
-      <div style="margin-bottom: 12px;">
-        <label for="geminiModelInput" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">Model</label>
-        <input type="text" id="geminiModelInput" value="gemini-2.5-flash-lite" placeholder="gemini-2.5-flash-lite" style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; color: #0f172a;" />
+        <label for="claudeModelInput" style="display: block; font-weight: bold; margin-bottom: 4px; color: #1e293b;">Model</label>
+        <input type="text" id="claudeModelInput" value="claude-sonnet-5" placeholder="claude-sonnet-5" style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; color: #0f172a;" />
       </div>
 
       <div style="margin-bottom: 16px;">
