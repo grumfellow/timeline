@@ -205,6 +205,102 @@ function setupAuthModal(onAuthSuccess) {
   });
 }
 
+function setupApiKeySettings() {
+  const openBtn = document.getElementById("openSettingsBtn");
+  const modal = document.getElementById("settingsModal");
+  const form = document.getElementById("settingsForm");
+  const input = document.getElementById("anthropicApiKeyInput");
+  const cancelBtn = document.getElementById("cancelSettingsBtn");
+  const clearBtn = document.getElementById("clearApiKeyBtn");
+  const submitBtn = document.getElementById("settingsSubmitBtn");
+  const errorMsg = document.getElementById("settingsErrorMsg");
+  const savedMsg = document.getElementById("settingsSavedMsg");
+
+  const apiKeyDocRef = () => doc(db, "users", auth.currentUser.uid, "settings", "apiKeys");
+
+  function closeModal() {
+    if (modal) modal.style.display = "none";
+  }
+
+  function resetMessages() {
+    if (errorMsg) {
+      errorMsg.style.display = "none";
+      errorMsg.textContent = "";
+    }
+    if (savedMsg) savedMsg.style.display = "none";
+  }
+
+  function showSaved(text) {
+    if (!savedMsg) return;
+    savedMsg.textContent = text;
+    savedMsg.style.display = "block";
+  }
+
+  function showError(text) {
+    if (!errorMsg) return;
+    errorMsg.textContent = text;
+    errorMsg.style.display = "block";
+  }
+
+  async function openSettingsModal() {
+    if (!auth.currentUser) return;
+    resetMessages();
+    if (input) input.value = "";
+    if (modal) modal.style.display = "flex";
+    try {
+      const snap = await getDoc(apiKeyDocRef());
+      if (input) input.value = snap.exists() ? (snap.data().anthropic || "") : "";
+    } catch (err) {
+      console.error("Error loading saved API key:", err);
+    }
+  }
+
+  if (openBtn) openBtn.addEventListener("click", openSettingsModal);
+  if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!auth.currentUser) return;
+      resetMessages();
+      submitBtn.disabled = true;
+      try {
+        await setDoc(apiKeyDocRef(), { anthropic: input.value.trim() }, { merge: true });
+        showSaved("Saved.");
+      } catch (err) {
+        console.error("Error saving API key:", err);
+        showError("Failed to save. Please try again.");
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener("click", async () => {
+      if (!auth.currentUser) return;
+      resetMessages();
+      clearBtn.disabled = true;
+      try {
+        await deleteDoc(apiKeyDocRef());
+        if (input) input.value = "";
+        showSaved("Removed.");
+      } catch (err) {
+        console.error("Error removing API key:", err);
+        showError("Failed to remove. Please try again.");
+      } finally {
+        clearBtn.disabled = false;
+      }
+    });
+  }
+
+  // Only signed-in users have somewhere to save this, so hide the button otherwise.
+  onAuthStateChanged(auth, (user) => {
+    if (openBtn) openBtn.style.display = user ? "inline-block" : "none";
+    if (!user) closeModal();
+  });
+}
+
 // Function to add a new event document to Firestore
 async function createEvent(timelineId, eventData) {
   if (!auth.currentUser) throw new Error("Must be logged in to create an event.");
@@ -1869,6 +1965,8 @@ async function init() {
     defaultOption.textContent = "Select Timeline";
     selectEl.appendChild(defaultOption);
   }
+
+  setupApiKeySettings();
 
   setupAuthModal(async (user) => {
     if (!user) {
