@@ -104,7 +104,8 @@
 
       #timelineSelect,
       #keywordFilterInput,
-      #fontSizeSlider {
+      #fontSizeSlider,
+      #quickRangeSelect {
         width: 100%;
       }
 
@@ -237,6 +238,16 @@
     <button id="resetTimelineViewBtn" style="padding: 8px 16px; cursor: pointer; background: #0f766e; color: white; border: none; border-radius: 4px; display: none;">
       Reset View
     </button>
+    <select id="quickRangeSelect" style="padding: 8px 12px; border-radius: 4px; border: 1px solid #475569; background: #1e293b; color: #f8fafc; cursor: pointer; display: none;">
+      <option value="">Jump to...</option>
+      <option value="week">Past Week</option>
+      <option value="month">Past Month</option>
+      <option value="quarter">Past Quarter</option>
+      <option value="year">Past Year</option>
+      <option value="decade">Past Decade</option>
+      <option value="century">Past Century</option>
+      <option value="millennium">Past Millennium</option>
+    </select>
     <button id="shareTimelineBtn" style="padding: 8px 16px; cursor: pointer; background: #7c3aed; color: white; border: none; border-radius: 4px; display: none;" title="Copy timeline URL for bookmarking">
       Share Timeline
     </button>

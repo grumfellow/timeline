@@ -841,14 +841,16 @@ function updateUIForTimelineOwner(timelineId) {
   const renameTimelineBtn = document.getElementById("renameTimelineBtn");
   const shareTimelineBtn = document.getElementById("shareTimelineBtn");
   const resetTimelineViewBtn = document.getElementById("resetTimelineViewBtn");
+  const quickRangeSelect = document.getElementById("quickRangeSelect");
 
   if (openAddEventBtn) openAddEventBtn.style.display = isOwner ? "inline-block" : "none";
   if (openImportCsvBtn) openImportCsvBtn.style.display = isOwner ? "inline-block" : "none";
   if (openAiImportBtn) openAiImportBtn.style.display = isOwner ? "inline-block" : "none";
   if (renameTimelineBtn) renameTimelineBtn.style.display = isOwner ? "inline-block" : "none";
-  // Share button and Reset View button are visible when a timeline is selected
+  // Share button, Reset View button, and quick range picker are visible when a timeline is selected
   if (shareTimelineBtn) shareTimelineBtn.style.display = timelineId ? "inline-block" : "none";
   if (resetTimelineViewBtn) resetTimelineViewBtn.style.display = timelineId ? "inline-block" : "none";
+  if (quickRangeSelect) quickRangeSelect.style.display = timelineId ? "inline-block" : "none";
 
   // Timeline public checkbox control
   const visibilityContainer = document.getElementById("timelineVisibilityContainer");
@@ -2145,6 +2147,52 @@ async function init() {
         xBaseScale.domain([domain[0], extendedEnd]);
       } catch (err) {
         // ignore and keep default domain
+      }
+
+      currentTransform = d3.zoomIdentity;
+      svg.call(zoom.transform, currentTransform);
+      const scale = currentTransform.rescaleX(xBaseScale);
+      updateTimeline(scale, currentTransform.k, getFilteredEvents());
+
+      if (auth.currentUser && activeTimelineId) {
+        scheduleSaveUserTimelineView(activeTimelineId);
+      }
+    });
+  }
+
+  const quickRangeSelect = document.getElementById("quickRangeSelect");
+  if (quickRangeSelect) {
+    quickRangeSelect.addEventListener("change", (e) => {
+      const unit = e.target.value;
+      e.target.value = "";
+      if (!unit) return;
+
+      const end = new Date();
+      let start;
+      switch (unit) {
+        case "week": start = d3.timeDay.offset(end, -7); break;
+        case "month": start = d3.timeMonth.offset(end, -1); break;
+        case "quarter": start = d3.timeMonth.offset(end, -3); break;
+        case "year": start = d3.timeYear.offset(end, -1); break;
+        case "decade": start = d3.timeYear.offset(end, -10); break;
+        case "century": start = d3.timeYear.offset(end, -100); break;
+        case "millennium": start = d3.timeYear.offset(end, -1000); break;
+        default: return;
+      }
+
+      xBaseScale.domain([start, end]);
+      xBaseScale.range([margin.left, width - margin.right]);
+
+      try {
+        const reserve = computeRightLabelReserve(eventsData);
+        const innerW = Math.max(100, width - margin.left - margin.right);
+        const domain = xBaseScale.domain();
+        const durationMs = domain[1].getTime() - domain[0].getTime();
+        const extraMs = Math.round((reserve / innerW) * Math.max(1, durationMs));
+        const extendedEnd = new Date(domain[1].getTime() + extraMs + 1000);
+        xBaseScale.domain([domain[0], extendedEnd]);
+      } catch (err) {
+        // ignore and keep computed domain
       }
 
       currentTransform = d3.zoomIdentity;
