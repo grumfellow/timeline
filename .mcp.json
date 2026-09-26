@@ -2,7 +2,7 @@
   "mcpServers": {
     "timeline": {
       "command": "node",
-      "args": ["mcp/server.mjs"]
+      "args": ["C:\\Projects\\timeline-mcp\\server.mjs"]
     }
   }
 }
